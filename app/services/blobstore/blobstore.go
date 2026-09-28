@@ -26,6 +26,10 @@ var (
 	// ErrInvalidDigest marks malformed digests; distinguishable from
 	// fs.ErrNotExist so callers can answer 400 instead of 404.
 	ErrInvalidDigest = errors.New("invalid digest")
+
+	// ErrDigestMismatch marks content whose hash does not match the
+	// promised digest.
+	ErrDigestMismatch = errors.New("digest mismatch")
 )
 
 // Store keeps blobs under Root (blobs land in <Root>/blobs).
@@ -62,13 +66,23 @@ func ValidateDigest(digest string) error {
 	return err
 }
 
-// Path returns the on-disk location of digest.
-func (s *Store) Path(digest string) (string, error) {
+// RelativePath returns the blob's storage-relative path, e.g.
+// "blobs/sha256/<hex>".
+func RelativePath(digest string) (string, error) {
 	algo, encoded, err := parseDigest(digest)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(s.Root, "blobs", algo, encoded), nil
+	return filepath.Join("blobs", algo, encoded), nil
+}
+
+// Path returns the on-disk location of digest.
+func (s *Store) Path(digest string) (string, error) {
+	rel, err := RelativePath(digest)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.Root, rel), nil
 }
 
 // Has reports whether digest is stored.
@@ -161,7 +175,7 @@ func (s *Store) Put(r io.Reader, digest string) (int64, error) {
 
 	got := "sha256:" + hex.EncodeToString(hash.Sum(nil))
 	if got != digest {
-		return written, fmt.Errorf("digest mismatch: got %s, want %s", got, digest)
+		return written, fmt.Errorf("%w: got %s, want %s", ErrDigestMismatch, got, digest)
 	}
 
 	if err := os.Rename(tmpName, path); err != nil {

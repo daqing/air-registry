@@ -1,6 +1,8 @@
 package config
 
 import (
+	"path/filepath"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/daqing/air-registry/app/assets"
@@ -14,6 +16,7 @@ import (
 	"github.com/daqing/air-registry/app/api/storage_api"
 	"github.com/daqing/air-registry/app/api/v2_api"
 	"github.com/daqing/air-registry/app/services/blobstore"
+	"github.com/daqing/air-registry/app/services/uploads"
 	"github.com/daqing/airway/app/websocket"
 	"github.com/daqing/airway/lib/plugin"
 )
@@ -37,7 +40,11 @@ func Routes(r *gin.Engine) {
 func PublicRoutes(r *gin.Engine) {
 	r.GET("/", home_api.IndexAction)
 
-	registryAPI := &v2_api.Handler{Blobs: blobstore.New(blobstore.DefaultRoot())}
+	registryStore := blobstore.New(blobstore.DefaultRoot())
+	registryAPI := &v2_api.Handler{
+		Blobs:   registryStore,
+		Uploads: uploads.NewManager(filepath.Join(registryStore.Root, "uploads")),
+	}
 	registryAPI.Routes(r)
 
 	assetRoutes(r)

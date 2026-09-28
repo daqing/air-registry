@@ -8,9 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/daqing/airway/lib/migrate"
 
 	"github.com/daqing/air-registry/app/services/blobstore"
 )
@@ -35,6 +39,18 @@ func setupBlobServer(t *testing.T, data []byte) (*gin.Engine, string) {
 func digestOf(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// migrateRun applies the project's migrations to a fresh SQLite database
+// at dsn and returns it ready for repo.SetupDB.
+func migrateRun(t *testing.T, dsn string) error {
+	t.Helper()
+	return migrate.Run(migrate.Options{
+		DSN:          dsn,
+		Migrations:   os.DirFS(filepath.Join("..", "..", "..", "db", "migrate")),
+		SnapshotPath: "",
+		Out:          io.Discard,
+	})
 }
 
 func randomBytes(t *testing.T, n int) []byte {

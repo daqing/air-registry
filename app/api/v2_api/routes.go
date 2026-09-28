@@ -8,5 +8,8 @@ import "github.com/gin-gonic/gin"
 func (h *Handler) Routes(r *gin.Engine) {
 	r.GET("/v2/*path", h.Dispatch)
 	r.HEAD("/v2/*path", h.Dispatch)
+	r.POST("/v2/*path", h.Dispatch)
 	r.PUT("/v2/*path", h.Dispatch)
+	r.PATCH("/v2/*path", h.Dispatch)
+	r.DELETE("/v2/*path", h.Dispatch)
 }

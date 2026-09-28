@@ -3,17 +3,14 @@ package v2_api
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/daqing/airway/lib/migrate"
 	"github.com/daqing/airway/lib/repo"
 	airwaysql "github.com/daqing/airway/lib/sql"
 
@@ -43,12 +40,7 @@ func setupManifestServer(t *testing.T) (*gin.Engine, *blobstore.Store) {
 	gin.SetMode(gin.TestMode)
 
 	dsn := "sqlite://" + filepath.ToSlash(filepath.Join(t.TempDir(), "registry-test.db"))
-	if err := migrate.Run(migrate.Options{
-		DSN:          dsn,
-		Migrations:   os.DirFS(filepath.Join("..", "..", "..", "db", "migrate")),
-		SnapshotPath: "",
-		Out:          io.Discard,
-	}); err != nil {
+	if err := migrateRun(t, dsn); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
 	if _, err := repo.SetupDB(dsn); err != nil {

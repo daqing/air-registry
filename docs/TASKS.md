@@ -89,7 +89,16 @@ README「目标与需求」。
 
 ## 阶段三:推送端点
 
-### T07 blob 单块上传
+### T07 blob 单块上传 [done]
+
+> 注:已用 lima 虚拟机里的**真实客户端**完成验收(不用 Docker Desktop):
+> `limactl create --name=reg-verify template://docker`,VM 内配
+> `/etc/docker/daemon.json` 的 `insecure-registries: ["192.168.5.2:1930"]`
+> (网关 IP 即宿主机),`docker push` / `docker pull` / `docker run` 全部
+> 通过;另在 a1s 实例用 nerdctl(容器栈)推过 OCI index 多架构镜像,亦成功。
+> 复验步骤:宿主机 `LISTEN=":1930" DSN=... go run .`,VM 里对
+> `192.168.5.2:1930/<name>` 推拉即可。该 VM 已 `limactl stop`,可
+> `limactl delete reg-verify` 删除。T10 的 pull 验收已顺带预验证。
 
 - 目标:docker push 走的主链路。
 - 要点:
