@@ -19,7 +19,7 @@ README「目标与需求」。
 
 ## 阶段一:基础
 
-### T01 数据库 schema 与 migration
+### T01 数据库 schema 与 migration [done]
 
 - 目标:建好核心表,后面所有端点依赖它。
 - 要点:
