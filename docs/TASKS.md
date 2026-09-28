@@ -43,7 +43,7 @@ README「目标与需求」。
   - 已存在同 digest 时直接成功(幂等)。
 - 验收:单元测试覆盖写入→读取→digest 不符→删除。
 
-### T03 `GET /v2/` 版本探测
+### T03 `GET /v2/` 版本探测 [done]
 
 - 目标:registry 探测端点,所有客户端推拉前的第一步。
 - 要点:`airway generate api v2`,挂 `GET /v2/`,返回 200 和响应头
