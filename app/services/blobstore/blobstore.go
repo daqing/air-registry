@@ -22,6 +22,10 @@ const defaultRoot = "./data/storage"
 var (
 	algoPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
 	hexPattern  = regexp.MustCompile(`^[a-f0-9]{32,}$`)
+
+	// ErrInvalidDigest marks malformed digests; distinguishable from
+	// fs.ErrNotExist so callers can answer 400 instead of 404.
+	ErrInvalidDigest = errors.New("invalid digest")
 )
 
 // Store keeps blobs under Root (blobs land in <Root>/blobs).
@@ -46,7 +50,7 @@ func DefaultRoot() string {
 func parseDigest(digest string) (algo, encoded string, err error) {
 	algo, encoded, ok := strings.Cut(digest, ":")
 	if !ok || !algoPattern.MatchString(algo) || !hexPattern.MatchString(encoded) {
-		return "", "", fmt.Errorf("invalid digest %q", digest)
+		return "", "", fmt.Errorf("%w %q", ErrInvalidDigest, digest)
 	}
 	return algo, encoded, nil
 }

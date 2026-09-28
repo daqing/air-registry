@@ -13,6 +13,7 @@ import (
 	"github.com/daqing/air-registry/app/api/openapi_api"
 	"github.com/daqing/air-registry/app/api/storage_api"
 	"github.com/daqing/air-registry/app/api/v2_api"
+	"github.com/daqing/air-registry/app/services/blobstore"
 	"github.com/daqing/airway/app/websocket"
 	"github.com/daqing/airway/lib/plugin"
 )
@@ -36,7 +37,8 @@ func Routes(r *gin.Engine) {
 func PublicRoutes(r *gin.Engine) {
 	r.GET("/", home_api.IndexAction)
 
-	v2_api.Routes(r)
+	registryAPI := &v2_api.Handler{Blobs: blobstore.New(blobstore.DefaultRoot())}
+	registryAPI.Routes(r)
 
 	assetRoutes(r)
 	websocketRoutes(r)

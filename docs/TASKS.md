@@ -52,7 +52,7 @@ README「目标与需求」。
 
 ## 阶段二:拉取端点
 
-### T04 blob 下载端点
+### T04 blob 下载端点 [done]
 
 - 目标:`GET /v2/<name>/blobs/<digest>` 返回 200 + `application/octet-stream`,
   `HEAD` 同路径返回 200/404。

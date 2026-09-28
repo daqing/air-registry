@@ -6,13 +6,16 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/daqing/air-registry/app/services/blobstore"
 )
 
 func TestIndexActionAnswersOCIVersionCheck(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
+	h := &Handler{Blobs: blobstore.New(t.TempDir())}
 	r := gin.New()
-	Routes(r)
+	h.Routes(r)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/", nil)
