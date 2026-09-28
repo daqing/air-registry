@@ -8,4 +8,5 @@ import "github.com/gin-gonic/gin"
 func (h *Handler) Routes(r *gin.Engine) {
 	r.GET("/v2/*path", h.Dispatch)
 	r.HEAD("/v2/*path", h.Dispatch)
+	r.PUT("/v2/*path", h.Dispatch)
 }

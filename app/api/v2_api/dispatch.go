@@ -26,6 +26,18 @@ func (h *Handler) Dispatch(c *gin.Context) {
 	}
 
 	segs := strings.Split(path, "/")
+	if name, ref, ok := parseManifestRef(segs); ok {
+		if !validRepoName(name) {
+			ociError(c, http.StatusBadRequest, "NAME_INVALID", "invalid repository name")
+			return
+		}
+		if c.Request.Method == http.MethodPut {
+			h.putManifest(c, name, ref)
+		} else {
+			ociError(c, http.StatusNotFound, "UNSUPPORTED", "unsupported API endpoint")
+		}
+		return
+	}
 	if name, digest, ok := parseBlobRef(segs); ok {
 		if !validRepoName(name) {
 			ociError(c, http.StatusBadRequest, "NAME_INVALID", "invalid repository name")
@@ -51,6 +63,17 @@ func parseBlobRef(segs []string) (name, digest string, ok bool) {
 	name = strings.Join(segs[:len(segs)-2], "/")
 	digest = segs[len(segs)-1]
 	return name, digest, name != "" && digest != ""
+}
+
+// parseManifestRef matches "<name>/manifests/<reference>" where <name> may
+// span multiple path segments.
+func parseManifestRef(segs []string) (name, reference string, ok bool) {
+	if len(segs) < 3 || segs[len(segs)-2] != "manifests" {
+		return "", "", false
+	}
+	name = strings.Join(segs[:len(segs)-2], "/")
+	reference = segs[len(segs)-1]
+	return name, reference, name != "" && reference != ""
 }
 
 var repoNameSegPattern = regexp.MustCompile(`^[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*$`)

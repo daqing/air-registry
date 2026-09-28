@@ -62,7 +62,7 @@ README「目标与需求」。
   - digest 格式非法 → 400;格式合法但不存在 → 404。
 - 验收:测试塞入 blob 后下载字节一致;404 路径有测试。
 
-### T05 manifest 写入服务 + `PUT /v2/<name>/manifests/<reference>`
+### T05 manifest 写入服务 + `PUT /v2/<name>/manifests/<reference>` [done]
 
 - 目标:能写入 manifest 并把元数据解析入库。
 - 要点:

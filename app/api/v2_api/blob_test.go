@@ -32,6 +32,11 @@ func setupBlobServer(t *testing.T, data []byte) (*gin.Engine, string) {
 	return r, digest
 }
 
+func digestOf(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 func randomBytes(t *testing.T, n int) []byte {
 	t.Helper()
 	data := make([]byte, n)

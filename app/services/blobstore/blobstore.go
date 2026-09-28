@@ -55,6 +55,13 @@ func parseDigest(digest string) (algo, encoded string, err error) {
 	return algo, encoded, nil
 }
 
+// ValidateDigest reports whether digest is well-formed, without touching
+// the filesystem.
+func ValidateDigest(digest string) error {
+	_, _, err := parseDigest(digest)
+	return err
+}
+
 // Path returns the on-disk location of digest.
 func (s *Store) Path(digest string) (string, error) {
 	algo, encoded, err := parseDigest(digest)
