@@ -1,0 +1,250 @@
+# Air Registry 开发任务清单
+
+按编号顺序逐步完成;每个 Task 独立可交付、可验证,做完一个勾一个。需求背景见
+README「目标与需求」。
+
+## 使用说明
+
+- 开发循环:`go run .` 启动服务(local 环境),`go test ./...` 跑测试;
+  端到端验证需要本机 Docker(匿名 registry,`localhost` 免配 insecure)。
+- 端点类 Task 都要补 Airway 风格测试(参考 `app/api/storage_api/storage_test.go`)。
+- 建议每完成一个 Task 在 develop 分支提交一次。
+- 技术约定:
+  - API 基础路径 `/v2/`,digest 格式 `sha256:<64 hex>`(宽松校验:`[a-z0-9]+:[a-f0-9]{32,}`)。
+  - manifest 字节**原样存取**,不做 schema 转换;docker schema2 与 OCI 媒体类型都要支持。
+  - blob 存 `data/storage/`,内容寻址,路径如 `data/storage/blobs/sha256/ab/abcdef...`。
+  - **Gin 路由注意**:仓库名有多级(如 `library/nginx`),而 Gin 的 `*path`
+    通配只能出现在路由末尾,所以 `/v2/*path` 用一个入口接住后自行解析
+    (name / 资源类型 / digest),不要在 Gin 路由里写 `:name`。
+
+## 阶段一:基础
+
+### T01 数据库 schema 与 migration
+
+- 目标:建好核心表,后面所有端点依赖它。
+- 要点:
+  - 表:`repositories`(name unique)、`blobs`(digest unique, size, path)、
+    `repo_blobs`(repo_id + blob_id 唯一,记录 blob 属于哪些仓库,跨仓库
+    mount 和 GC 都要用)、`manifests`(repo_id, digest, media_type,
+    artifact_type 可空, subject_digest 可空, size, content 原样字节)、
+    `tags`(repo_id, name, manifest_digest, updated_at;repo_id + name 唯一)。
+  - Referrers 不需要单独表:`manifests.subject_digest` 反查即可。
+  - 用 `airway generate model ...` 生成,再补 migration。
+- 验收:`airway db:migrate` 成功;model 测试覆盖增删查。
+
+### T02 磁盘 blob 存储服务
+
+- 目标:封装内容寻址的 blob 文件读写,供端点层复用。
+- 要点:
+  - 新建 `app/services/blobstore/`:Put(io.Reader, digest) → 边写边算
+    sha256,与声明 digest 不一致则报错并清理临时文件,一致则 rename 落盘;
+    Has / Get / Size / Delete。
+  - 路径 `data/storage/blobs/<algo>/<hex>`,写 `.tmp` 后原子 rename。
+  - 已存在同 digest 时直接成功(幂等)。
+- 验收:单元测试覆盖写入→读取→digest 不符→删除。
+
+### T03 `GET /v2/` 版本探测
+
+- 目标:registry 探测端点,所有客户端推拉前的第一步。
+- 要点:`airway generate api v2`,挂 `GET /v2/`,返回 200 和响应头
+  `Docker-Distribution-API-Version: registry/2.0`。
+- 验收:`curl -i http://localhost:1900/v2/` 见 200 与上述响应头;测试覆盖。
+
+## 阶段二:拉取端点
+
+### T04 blob 下载端点
+
+- 目标:`GET /v2/<name>/blobs/<digest>` 返回 200 + `application/octet-stream`,
+  `HEAD` 同路径返回 200/404。
+- 要点:
+  - 从 T02 的 blobstore 取流,响应带 `Docker-Content-Digest` 头;未命中
+    返回 404 `BLOB_UNKNOWN`。
+  - digest 格式非法 → 400;格式合法但不存在 → 404。
+- 验收:测试塞入 blob 后下载字节一致;404 路径有测试。
+
+### T05 manifest 写入服务 + `PUT /v2/<name>/manifests/<reference>`
+
+- 目标:能写入 manifest 并把元数据解析入库。
+- 要点:
+  - reference 支持 tag 和 digest 两种。
+  - 读取 body 原样保存;按 mediaType 解析 config / layers / annotations /
+    subject;index 类型解析子 manifest digest 列表。
+  - 计算 digest,连同原样字节写 `manifests` 行;reference 为 tag 时 upsert
+    `tags` 行。
+  - 把 config + layers(及 index 的子 manifest)digest 写入 `repo_blobs`。
+  - subject 非空时记录 `subject_digest`(为 Referrers 铺垫)。
+  - 响应 201 + `Docker-Content-Digest` 头;同 digest + tag 重复 PUT 幂等。
+- 验收:测试验证 PUT 后四张表记录正确;curl PUT 一个手写 manifest JSON。
+
+### T06 manifest 读取 + tag 列表
+
+- 目标:`GET`/`HEAD /v2/<name>/manifests/<reference>`(tag 或 digest),以及
+  `GET /v2/<name>/tags/list`。
+- 要点:
+  - Accept 头同时兼容 OCI 与 docker schema2 媒体类型;按存储的 mediaType
+    原样返回,带 `Docker-Content-Digest` 头;未命中 404 `MANIFEST_UNKNOWN`。
+  - tags/list 返回 `{"name": ..., "tags": [...]}`;先不加分页,n/last
+    查询参数透传不报错即可。
+- 验收:测试覆盖 tag 引用、digest 引用、404;curl 验证返回字节与 PUT 时一致。
+
+## 阶段三:推送端点
+
+### T07 blob 单块上传
+
+- 目标:docker push 走的主链路。
+- 要点:
+  - `POST /v2/<name>/blobs/uploads/` → 202,`Location` 头给出 upload URL,
+    `Range: 0-0`,`Docker-Upload-UUID`。
+  - `PUT <upload URL>?digest=<digest>`(带完整 body)→ 校验 digest、落盘,
+    201 + `Docker-Content-Digest`。也支持 `POST ...?digest=` 一步完成。
+  - 上传状态可放内存 map(UUID → 临时文件),重启丢弃即可(客户端会重试)。
+- 验收:`docker push localhost:1900/demo/app:v1` 成功,docker 能完整推完。
+
+### T08 blob 分块上传
+
+- 目标:`PATCH`(可多次,`Content-Range` 续传)+ 最后一次 `PUT ?digest=`。
+- 要点:维护已写 offset,每次响应 `Range: 0-<n-1>`;`PUT` 时统一校验 digest;
+  非法 offset / digest 不符报错。
+- 验收:`crane push`(走 chunked)成功;测试覆盖多次 PATCH 续传。
+
+### T09 跨仓库 blob mount
+
+- 目标:`POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<repo>`。
+- 要点:目标 digest 在 `from` 仓库存在时,直接复制 `repo_blobs` 关联,
+  返回 201 + `Docker-Content-Digest`;不存在则降级为普通上传(202)。
+- 验收:同一份基础镜像推到两个仓库,docker 日志确认走了 mount;测试覆盖
+  命中与降级两条路径。
+
+## 阶段四:发现、删除与回收
+
+### T10 端到端拉取验证
+
+- 目标:确认 pull 链路在真实客户端下完整可用。
+- 验收:
+  - `docker pull localhost:1900/demo/app:v1` 成功,运行 `docker run --rm
+    localhost:1900/demo/app:v1` 无异常。
+  - `crane manifest` / `crane ls` / `crane blob` 均正常。
+
+### T11 `/v2/_catalog`
+
+- 目标:仓库枚举,支持 `n` / `last` 分页。
+- 验收:`curl 'http://localhost:1900/v2/_catalog?n=2'` 分页正确;测试覆盖。
+
+### T12 删除 manifest
+
+- 目标:`DELETE /v2/<name>/manifests/<digest>`(按 tag 删除时先解析到
+  digest)。
+- 要点:删除 `manifests` 行与关联 `tags` 行;`repo_blobs` 里只删本仓库
+  的关联;响应 202。document 一下:删除 subject 后其 referrers 成为孤儿,
+  当前不做级联。
+- 验收:`crane delete localhost:1900/demo/app:v1` 后再 pull 返回 404;
+  测试覆盖。
+
+### T13 垃圾回收(GC)
+
+- 目标:清理不再被任何 manifest 引用的 blob。
+- 要点:
+  - 算法:扫描全部 `manifests`,收集所有被引用 digest(config + layers +
+    index 子 manifest + manifest 自身按内容寻址的那个),其余 blob 删文件
+    + 删行。
+  - 挂在 DELETE 后自动执行,另提供 `go run . gc` 手动兜底命令。
+- 验收:推镜像 → 删 manifest → 确认 `data/storage` 对应文件消失;重复执行
+  幂等;测试覆盖。
+
+## 阶段五:OCI 1.1 Referrers
+
+### T14 Referrers API
+
+- 目标:`GET /v2/<name>/referrers/<digest>` 返回 OCI index。
+- 要点:
+  - 查 `manifests.subject_digest = <digest>` 的记录,组装为
+    `application/vnd.oci.image.index.v1+json`,每项含 digest、mediaType、
+    artifactType、size、annotations。
+  - 支持 `?artifactType=` 过滤;无结果返回空 index(200,不是 404)。
+- 验收:测试覆盖过滤与空结果。
+
+### T15 Referrers 端到端验证
+
+- 目标:真实签名/SBOM 附件链路可用。
+- 验收:
+  - `oras attach localhost:1900/demo/app:v1 sbom.json
+    --artifact-type application/vnd.example.sbom`
+  - `oras discover localhost:1900/demo/app:v1` 能看到附件;
+    `curl .../referrers/<digest>` 返回内容一致。
+
+## 阶段六:网页端
+
+### T16 首页 + 仓库列表页
+
+- 目标:改造 `app/views/home`,首页放搜索框 + 最近推送仓库;新增
+  `/repos` 分页列表(名称、tag 数、总大小、更新时间)。
+- 要点:服务端渲染 templ + 分页组件(`app/assets/js/ui/pagination.tsx`
+  已有现成组件);按 updated_at 倒序。
+- 验收:浏览器打开可见仓库列表,分页可点;空库时有 empty state。
+
+### T17 镜像搜索
+
+- 目标:按仓库名模糊搜索。
+- 要点:搜索走 `/repos?q=`,SQL `LIKE`(注意转义 `%`/`_`);结果页与列表页
+  复用;无结果显示 empty state + 清空搜索入口。
+- 验收:输入关键词过滤正确,特殊字符不报错;测试覆盖。
+
+### T18 镜像详情页
+
+- 目标:`/repos/<name>` 展示该仓库的 tag 列表与 manifest 详情。
+- 要点:
+  - tag 表:tag 名、digest、大小、推送时间。
+  - 点开 tag:layers(config + 各层,digest、size、mediaType)、总大小、
+    manifest digest、annotations。
+  - 有 referrers 时列出附件(artifactType + digest,链到对应 manifest)。
+- 验收:多 tag、多架构(index)镜像展示正确;测试覆盖。
+
+## 阶段七:收尾
+
+### T19 配置整理
+
+- 目标:把硬编码项收进配置。
+- 要点:storage 根目录(`DATA_DIR`,默认 `data/storage`)、上传大小上限、
+  认证开关占位(默认关,留出 middleware 扩展点)。
+- 验收:改配置生效;`.env.example` 同步;测试不依赖具体目录。
+
+### T20 OCI Distribution Spec conformance 测试
+
+- 目标:用官方套件验证兼容性。
+- 要点:clone `opencontainers/distribution-spec`,用其 conformance 测试,
+  环境变量指向本地实例,覆盖 pull / push / content discovery / referrers
+  各组。
+- 验收:全部通过;把失败项修完或明确记录已知差异。
+
+### T21 文档与清理
+
+- 目标:收尾。
+- 要点:README 补使用方式(docker 配置示例、网页入口)、已知限制;过一遍
+  代码,删掉脚手架遗留的无用文件;确认注释与实现一致。
+- 验收:`go vet ./... && go test ./...` 全绿;两份 README 同步。
+
+## 后续扩展(暂不做,仅记录)
+
+- HTTP basic auth(推拉分权)、htpasswd 风格用户管理
+- TLS / 反代部署指南
+- 网页端管理操作(删除 tag / 仓库)
+- 按仓库配额、只读模式等策略
+- 定时 GC / 存储用量统计
+
+## 附录:端点 ↔ Task 对照
+
+| 端点 | 方法 | Task |
+|---|---|---|
+| `/v2/` | GET | T03 |
+| `/v2/<name>/blobs/<digest>` | GET / HEAD | T04 |
+| `/v2/<name>/manifests/<ref>` | PUT | T05 |
+| `/v2/<name>/manifests/<ref>` | GET / HEAD | T06 |
+| `/v2/<name>/tags/list` | GET | T06 |
+| `/v2/<name>/blobs/uploads/` | POST | T07 |
+| `<upload>` | PUT(`?digest=`) | T07 / T08 |
+| `<upload>` | PATCH | T08 |
+| `/v2/<name>/blobs/uploads/?mount=&from=` | POST | T09 |
+| `/v2/_catalog` | GET | T11 |
+| `/v2/<name>/manifests/<digest>` | DELETE | T12 |
+| GC(内部 + `go run . gc`) | — | T13 |
+| `/v2/<name>/referrers/<digest>` | GET | T14 |
