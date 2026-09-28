@@ -32,7 +32,7 @@ README「目标与需求」。
   - 用 `airway generate model ...` 生成,再补 migration。
 - 验收:`airway db:migrate` 成功;model 测试覆盖增删查。
 
-### T02 磁盘 blob 存储服务
+### T02 磁盘 blob 存储服务 [done]
 
 - 目标:封装内容寻址的 blob 文件读写,供端点层复用。
 - 要点:
