@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"mime"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -153,6 +154,50 @@ func Digest(content []byte) string {
 }
 
 var tagPattern = regexp.MustCompile(`^[\w][\w.-]{0,127}$`)
+
+// Find resolves a manifest by tag or digest reference within a repository.
+// Returns (nil, nil) when nothing matches.
+func Find(repoName, reference string) (*models.Manifest, error) {
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+	if err != nil || r == nil {
+		return nil, err
+	}
+
+	digest := reference
+	if !strings.Contains(reference, ":") {
+		tag, err := repo.FindOneBy[models.Tag](airwaysql.H{"repo_id": r.ID, "name": reference})
+		if err != nil {
+			return nil, err
+		}
+		if tag == nil {
+			return nil, nil
+		}
+		digest = tag.ManifestDigest
+	}
+
+	return repo.FindOneBy[models.Manifest](airwaysql.H{"repo_id": r.ID, "digest": digest})
+}
+
+// ListTags returns the sorted tag names of a repository, or (nil, nil) when
+// the repository does not exist.
+func ListTags(repoName string) ([]string, error) {
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+	if err != nil || r == nil {
+		return nil, err
+	}
+
+	tags, err := repo.FindBy[models.Tag](airwaysql.H{"repo_id": r.ID})
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(tags))
+	for _, t := range tags {
+		names = append(names, t.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
 
 // Store persists content and its metadata, upserts the repository, links
 // the referenced blobs to it, and points the tag at the manifest digest

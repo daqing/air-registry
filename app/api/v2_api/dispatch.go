@@ -26,14 +26,29 @@ func (h *Handler) Dispatch(c *gin.Context) {
 	}
 
 	segs := strings.Split(path, "/")
+	if name, ok := parseTagsListRef(segs); ok {
+		if !validRepoName(name) {
+			ociError(c, http.StatusBadRequest, "NAME_INVALID", "invalid repository name")
+			return
+		}
+		if c.Request.Method == http.MethodGet {
+			h.listTags(c, name)
+		} else {
+			ociError(c, http.StatusNotFound, "UNSUPPORTED", "unsupported API endpoint")
+		}
+		return
+	}
 	if name, ref, ok := parseManifestRef(segs); ok {
 		if !validRepoName(name) {
 			ociError(c, http.StatusBadRequest, "NAME_INVALID", "invalid repository name")
 			return
 		}
-		if c.Request.Method == http.MethodPut {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead:
+			h.getManifest(c, name, ref)
+		case http.MethodPut:
 			h.putManifest(c, name, ref)
-		} else {
+		default:
 			ociError(c, http.StatusNotFound, "UNSUPPORTED", "unsupported API endpoint")
 		}
 		return
@@ -63,6 +78,16 @@ func parseBlobRef(segs []string) (name, digest string, ok bool) {
 	name = strings.Join(segs[:len(segs)-2], "/")
 	digest = segs[len(segs)-1]
 	return name, digest, name != "" && digest != ""
+}
+
+// parseTagsListRef matches "<name>/tags/list" where <name> may span multiple
+// path segments.
+func parseTagsListRef(segs []string) (name string, ok bool) {
+	if len(segs) < 3 || segs[len(segs)-2] != "tags" || segs[len(segs)-1] != "list" {
+		return "", false
+	}
+	name = strings.Join(segs[:len(segs)-2], "/")
+	return name, name != ""
 }
 
 // parseManifestRef matches "<name>/manifests/<reference>" where <name> may

@@ -76,7 +76,7 @@ README「目标与需求」。
   - 响应 201 + `Docker-Content-Digest` 头;同 digest + tag 重复 PUT 幂等。
 - 验收:测试验证 PUT 后四张表记录正确;curl PUT 一个手写 manifest JSON。
 
-### T06 manifest 读取 + tag 列表
+### T06 manifest 读取 + tag 列表 [done]
 
 - 目标:`GET`/`HEAD /v2/<name>/manifests/<reference>`(tag 或 digest),以及
   `GET /v2/<name>/tags/list`。
