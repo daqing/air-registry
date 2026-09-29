@@ -241,14 +241,19 @@ README「目标与需求」。
 - 测试覆盖:空结果(未知 subject/未知仓库)、descriptor 字段、artifactType
   过滤、非法 digest、非 GET 拒绝。
 
-### T15 Referrers 端到端验证
+### T15 Referrers 端到端验证 [done]
 
 - 目标:真实签名/SBOM 附件链路可用。
-- 验收:
-  - `oras attach localhost:1900/demo/app:v1 sbom.json
-    --artifact-type application/vnd.example.sbom`
-  - `oras discover localhost:1900/demo/app:v1` 能看到附件;
-    `curl .../referrers/<digest>` 返回内容一致。
+- 验收记录(2026-09-29,宿主机 oras( go run oras.land/oras/cmd/oras@latest)
+  + crane,localhost:1930 实例):
+  - `oras attach localhost:1930/demo/app:v1 sbom.json:application/json
+    --artifact-type application/vnd.example.sbom` 成功
+    (绝对路径需加 `--disable-path-validation`)。
+  - `oras discover localhost:1930/demo/app:v1` 列出 sbom 附件;再 attach
+    signature 附件后两个都在,`--artifact-type` 过滤正确。
+  - `curl .../referrers/<subject-digest>` 的 digest/artifactType/
+    annotations/size 与 oras 推送内容一致;referrer manifest 可按 digest
+    拉取,其层 blob 字节与原始 sbom.json 完全一致。
 
 ## 阶段六:网页端
 
