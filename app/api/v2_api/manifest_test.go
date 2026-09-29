@@ -33,6 +33,7 @@ type testManifest struct {
 	Manifests     []testDescriptor `json:"manifests,omitempty"`
 	Subject       *testDescriptor  `json:"subject,omitempty"`
 	ArtifactType  string           `json:"artifactType,omitempty"`
+	Annotations   map[string]string `json:"annotations,omitempty"`
 }
 
 func setupManifestServer(t *testing.T) (*gin.Engine, *blobstore.Store) {

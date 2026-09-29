@@ -224,15 +224,22 @@ README「目标与需求」。
 
 ## 阶段五:OCI 1.1 Referrers
 
-### T14 Referrers API
+### T14 Referrers API [done]
 
 - 目标:`GET /v2/<name>/referrers/<digest>` 返回 OCI index。
-- 要点:
-  - 查 `manifests.subject_digest = <digest>` 的记录,组装为
-    `application/vnd.oci.image.index.v1+json`,每项含 digest、mediaType、
-    artifactType、size、annotations。
-  - 支持 `?artifactType=` 过滤;无结果返回空 index(200,不是 404)。
-- 验收:测试覆盖过滤与空结果。
+- 实现:`manifests.Referrers(repoName, digest, artifactType)` 按
+  `subject_digest` 反查(manifests 表无 annotations 列,从 content 现解析,
+  `Meta` 相应新增 `Annotations` 字段);handler 组装
+  `application/vnd.oci.image.index.v1+json`,descriptor 含 digest、
+  mediaType、size、artifactType(可空则省略)、annotations(非空才带);
+  `?artifactType=` 精确过滤;未知仓库/无结果一律 200 空 index
+  (`"manifests":[]` 非 null),digest 非法 400。
+- 验收记录(2026-09-29):crane 推 single-arch busybox 后手写 PUT sbom
+  referrer,`curl .../referrers/<digest>` 返回正确 envelope(Content-Type
+  为 index 媒体类型,descriptor 五项齐全),过滤 1/0 正确;T15 将用 oras
+  做端到端。
+- 测试覆盖:空结果(未知 subject/未知仓库)、descriptor 字段、artifactType
+  过滤、非法 digest、非 GET 拒绝。
 
 ### T15 Referrers 端到端验证
 

@@ -63,6 +63,9 @@ type Meta struct {
 	ArtifactType  *string
 	SubjectDigest *string
 
+	// Annotations feeds the Referrers API descriptors.
+	Annotations map[string]string
+
 	IsIndex bool
 
 	// BlobDigests lists content blobs the manifest references: config +
@@ -97,7 +100,7 @@ func Parse(content []byte, contentType string) (*Meta, error) {
 		mediaType = mt
 	}
 
-	meta := &Meta{MediaType: mediaType}
+	meta := &Meta{MediaType: mediaType, Annotations: doc.Annotations}
 	if doc.ArtifactType != "" {
 		v := doc.ArtifactType
 		meta.ArtifactType = &v
@@ -198,6 +201,49 @@ func ListTags(repoName string) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// Referrer is one descriptor of the referrers index response.
+type Referrer struct {
+	MediaType    string
+	Digest       string
+	Size         int64
+	ArtifactType *string
+	Annotations  map[string]string
+}
+
+// Referrers lists the manifests of repoName that declare digest as their
+// subject, optionally filtered by artifact type. Unknown repositories and
+// subjects yield an empty list (the endpoint answers an empty index, not
+// 404).
+func Referrers(repoName, digest, artifactType string) ([]Referrer, error) {
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+	if err != nil || r == nil {
+		return nil, err
+	}
+
+	rows, err := repo.FindBy[models.Manifest](airwaysql.H{"repo_id": r.ID, "subject_digest": digest})
+	if err != nil {
+		return nil, err
+	}
+
+	referrers := make([]Referrer, 0, len(rows))
+	for _, m := range rows {
+		if artifactType != "" && (m.ArtifactType == nil || *m.ArtifactType != artifactType) {
+			continue
+		}
+		ref := Referrer{
+			MediaType:    m.MediaType,
+			Digest:       m.Digest,
+			Size:         m.Size,
+			ArtifactType: m.ArtifactType,
+		}
+		if meta, err := Parse([]byte(m.Content), ""); err == nil {
+			ref.Annotations = meta.Annotations
+		}
+		referrers = append(referrers, ref)
+	}
+	return referrers, nil
 }
 
 // Delete removes the manifest referenced by tag or digest, along with every
