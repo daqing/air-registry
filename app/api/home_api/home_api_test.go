@@ -41,6 +41,7 @@ func setupWebServer(t *testing.T) *gin.Engine {
 	r := gin.New()
 	r.GET("/", IndexAction)
 	r.GET("/repos", ReposAction)
+	r.GET("/repos/*path", RepoAction)
 	return r
 }
 
@@ -110,6 +111,83 @@ func getPage(t *testing.T, r *gin.Engine, url string) *httptest.ResponseRecorder
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 	r.ServeHTTP(w, req)
 	return w
+}
+
+// dgst builds a syntactically valid digest from a repeated hex char.
+func dgst(hex string) string {
+	return "sha256:" + strings.Repeat(hex, 32)
+}
+
+func ensureRepo(t *testing.T, name string, now time.Time) *models.Repository {
+	t.Helper()
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": name})
+	if err != nil {
+		t.Fatalf("find repository: %v", err)
+	}
+	if r != nil {
+		return r
+	}
+	r, err = repo.CreateFrom[models.Repository](airwaysql.H{
+		"name":       name,
+		"created_at": now,
+		"updated_at": now,
+	})
+	if err != nil {
+		t.Fatalf("create repository: %v", err)
+	}
+	return r
+}
+
+func seedManifestRow(t *testing.T, r *models.Repository, digest, mediaType, content string, artifactType, subject *string, now time.Time) {
+	t.Helper()
+	if _, err := repo.CreateFrom[models.Manifest](airwaysql.H{
+		"repo_id":        r.ID,
+		"digest":         digest,
+		"media_type":     mediaType,
+		"artifact_type":  artifactType,
+		"subject_digest": subject,
+		"size":           int64(len(content)),
+		"content":        content,
+		"created_at":     now,
+		"updated_at":     now,
+	}); err != nil {
+		t.Fatalf("seed manifest: %v", err)
+	}
+}
+
+func seedTagRow(t *testing.T, r *models.Repository, name, digest string, now time.Time) {
+	t.Helper()
+	if _, err := repo.CreateFrom[models.Tag](airwaysql.H{
+		"repo_id":         r.ID,
+		"name":            name,
+		"manifest_digest": digest,
+		"created_at":      now,
+		"updated_at":      now,
+	}); err != nil {
+		t.Fatalf("seed tag: %v", err)
+	}
+}
+
+// seedImageRepo seeds a repository with an OCI image manifest (config 100 B,
+// layers 500 B + 700 B, annotations) tagged v1 and latest.
+func seedImageRepo(t *testing.T, repoName string, now time.Time) (imageDigest string) {
+	t.Helper()
+	r := ensureRepo(t, repoName, now)
+	imageDigest = dgst("dd")
+	content := `{
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "` + dgst("11") + `", "size": 100},
+		"layers": [
+			{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": "` + dgst("22") + `", "size": 500},
+			{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": "` + dgst("33") + `", "size": 700}
+		],
+		"annotations": {"org.opencontainers.image.title": "demo app"}
+	}`
+	seedManifestRow(t, r, imageDigest, "application/vnd.oci.image.manifest.v1+json", content, nil, nil, now)
+	seedTagRow(t, r, "v1", imageDigest, now)
+	seedTagRow(t, r, "latest", imageDigest, now.Add(-time.Hour))
+	return imageDigest
 }
 
 func TestIndexActionRendersHomePage(t *testing.T) {
@@ -310,5 +388,188 @@ func TestReposActionSearchNoResultsShowsClearSearch(t *testing.T) {
 	}
 	if !strings.Contains(body, "Clear search") || !strings.Contains(body, `href="/repos"`) {
 		t.Fatalf("expected a clear-search entry, got %q", body)
+	}
+}
+
+func TestRepoActionRendersTagTable(t *testing.T) {
+	r := setupWebServer(t)
+	now := time.Now()
+	imageDigest := seedImageRepo(t, "demo/app", now)
+
+	// A second manifest with its own tag; v2 shares the image manifest.
+	repo := ensureRepo(t, "demo/app", now)
+	other := dgst("ee")
+	seedManifestRow(t, repo, other,
+		"application/vnd.oci.image.manifest.v1+json",
+		`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","layers":[]}`,
+		nil, nil, now.Add(-30*time.Minute))
+	seedTagRow(t, repo, "v2", imageDigest, now.Add(-time.Minute))
+	seedTagRow(t, repo, "edge", other, now.Add(-30*time.Minute))
+
+	w := getPage(t, r, "/repos/demo/app")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		"demo/app",
+		`href="/repos/demo/app?tag=v1"`,
+		`href="/repos/demo/app?tag=v2"`,
+		`href="/repos/demo/app?tag=edge"`,
+		// Image manifest total: 100 + 500 + 700 = 1300 → 1.3 KiB.
+		"1.3 KiB",
+		// The layer-less manifest totals 0.
+		"0 B",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected body to contain %q, got %q", want, body)
+		}
+	}
+	// Sorted by tag name: edge, latest, v1, v2.
+	if strings.Index(body, "?tag=edge") > strings.Index(body, "?tag=latest") ||
+		strings.Index(body, "?tag=latest") > strings.Index(body, "?tag=v1") {
+		t.Fatalf("expected tags sorted by name, got %q", body)
+	}
+}
+
+func TestRepoActionExpandsManifestByTag(t *testing.T) {
+	r := setupWebServer(t)
+	imageDigest := seedImageRepo(t, "demo/app", time.Now())
+
+	w := getPage(t, r, "/repos/demo/app?tag=v1")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		imageDigest, // full digest of the selected manifest
+		"application/vnd.oci.image.manifest.v1+json",
+		"Total size",
+		"1.3 KiB",
+		// Config row.
+		"sha256:" + strings.Repeat("11", 12),
+		// Layer rows: digests and humanized sizes.
+		"sha256:" + strings.Repeat("22", 12),
+		"sha256:" + strings.Repeat("33", 12),
+		"500 B",
+		"700 B",
+		// Annotations.
+		"org.opencontainers.image.title",
+		"demo app",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected body to contain %q, got %q", want, body)
+		}
+	}
+}
+
+func TestRepoActionExpandsIndexByTag(t *testing.T) {
+	r := setupWebServer(t)
+	now := time.Now()
+	repo := ensureRepo(t, "multi/arch", now)
+
+	childContent := `{
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "` + dgst("44") + `", "size": 80},
+		"layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar+gzip", "digest": "` + dgst("55") + `", "size": 400}]
+	}`
+	seedManifestRow(t, repo, dgst("aa"), "application/vnd.oci.image.manifest.v1+json", childContent, nil, nil, now)
+	seedManifestRow(t, repo, dgst("bb"), "application/vnd.oci.image.manifest.v1+json", childContent, nil, nil, now)
+
+	indexContent := `{
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.index.v1+json",
+		"manifests": [
+			{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "` + dgst("aa") + `", "size": 480, "platform": {"architecture": "amd64", "os": "linux"}},
+			{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "` + dgst("bb") + `", "size": 480, "platform": {"architecture": "arm64", "os": "linux", "variant": "v8"}}
+		]
+	}`
+	seedManifestRow(t, repo, dgst("99"), "application/vnd.oci.image.index.v1+json", indexContent, nil, nil, now)
+	seedTagRow(t, repo, "latest", dgst("99"), now)
+
+	w := getPage(t, r, "/repos/multi/arch?tag=latest")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{
+		dgst("99"),
+		"application/vnd.oci.image.index.v1+json",
+		"linux/amd64",
+		"linux/arm64/v8",
+		"sha256:" + strings.Repeat("aa", 12),
+		"sha256:" + strings.Repeat("bb", 12),
+		// Total: children 480×2 + their config+layers 480×2 = 1920 → 1.9 KiB.
+		"1.9 KiB",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected body to contain %q, got %q", want, body)
+		}
+	}
+}
+
+func TestRepoActionListsReferrers(t *testing.T) {
+	r := setupWebServer(t)
+	now := time.Now()
+	imageDigest := seedImageRepo(t, "demo/app", now)
+
+	repo := ensureRepo(t, "demo/app", now)
+	artifactType := "application/vnd.example.sbom"
+	sbomDigest := dgst("cc")
+	sbomContent := `{
+		"schemaVersion": 2,
+		"mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"artifactType": "` + artifactType + `",
+		"config": {"mediaType": "application/vnd.oci.empty.v1+json", "digest": "` + dgst("44") + `", "size": 2},
+		"layers": [{"mediaType": "application/json", "digest": "` + dgst("55") + `", "size": 300}],
+		"subject": {"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": "` + imageDigest + `"}
+	}`
+	seedManifestRow(t, repo, sbomDigest, "application/vnd.oci.image.manifest.v1+json", sbomContent, &artifactType, &imageDigest, now.Add(time.Minute))
+
+	// The selected image lists its referrer.
+	w := getPage(t, r, "/repos/demo/app?tag=v1")
+	body := w.Body.String()
+	if !strings.Contains(body, "Referrers") || !strings.Contains(body, artifactType) {
+		t.Fatalf("expected the referrers table, got %q", body)
+	}
+	if !strings.Contains(body, `href="/repos/demo/app?digest=sha256%3A`+strings.Repeat("cc", 32)+`"`) {
+		t.Fatalf("expected a link to the referrer manifest, got %q", body)
+	}
+
+	// The referrer itself links back to its subject.
+	w = getPage(t, r, "/repos/demo/app?digest="+sbomDigest)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, "Subject") || !strings.Contains(body, imageDigest) {
+		t.Fatalf("expected a subject link back to the image, got %q", body)
+	}
+}
+
+func TestRepoActionUnknownReferences(t *testing.T) {
+	r := setupWebServer(t)
+	imageDigest := seedImageRepo(t, "demo/app", time.Now())
+
+	w := getPage(t, r, "/repos/no/such/repo")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for an unknown repository, got %d", w.Code)
+	}
+
+	// Unknown tag: 404, a notice, but the repository tag table still renders.
+	w = getPage(t, r, "/repos/demo/app?tag=v9")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for an unknown tag, got %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "No manifest named v9") {
+		t.Fatalf("expected a notice for the unknown tag, got %q", body)
+	}
+	if !strings.Contains(body, `href="/repos/demo/app?tag=v1"`) || !strings.Contains(body, imageDigest) {
+		t.Fatalf("expected the tag table to still render, got %q", body)
 	}
 }

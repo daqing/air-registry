@@ -40,6 +40,22 @@ type descriptor struct {
 	MediaType string `json:"mediaType"`
 	Digest    string `json:"digest"`
 	Size      int64  `json:"size"`
+	Platform  *struct {
+		Architecture string `json:"architecture"`
+		OS           string `json:"os"`
+		Variant      string `json:"variant"`
+	} `json:"platform"`
+}
+
+func (d descriptor) platformLabel() string {
+	if d.Platform == nil {
+		return ""
+	}
+	label := d.Platform.OS + "/" + d.Platform.Architecture
+	if d.Platform.Variant != "" {
+		label += "/" + d.Platform.Variant
+	}
+	return label
 }
 
 type manifestDoc struct {
@@ -244,6 +260,113 @@ func Referrers(repoName, digest, artifactType string) ([]Referrer, error) {
 		referrers = append(referrers, ref)
 	}
 	return referrers, nil
+}
+
+// Entry is one row of an expanded manifest: the config, a layer/blob, or
+// (for indexes) a child manifest.
+type Entry struct {
+	Digest    string
+	MediaType string
+	Size      int64
+	// Platform is set for index children, e.g. "linux/amd64".
+	Platform string
+}
+
+// Expanded is a manifest fully expanded for the web detail page.
+type Expanded struct {
+	Digest       string
+	MediaType    string
+	ArtifactType *string
+	Annotations  map[string]string
+	// Subject is set when this manifest is a referrer (OCI 1.1).
+	Subject *string
+	IsIndex bool
+
+	// Config and Layers describe image/artifact manifests; Layers also
+	// holds artifact blobs. Children lists the child manifests of an index.
+	Config   *Entry
+	Layers   []Entry
+	Children []Entry
+
+	// TotalSize is config+layers for image manifests, and — recursively —
+	// child manifest sizes plus their content for indexes.
+	TotalSize int64
+}
+
+// Expand parses m's content into display form. Index children are looked up
+// under repoID to add their own content to TotalSize; children missing from
+// the repository contribute only the size declared by the index descriptor.
+func Expand(repoID airwaysql.IdType, m *models.Manifest) (*Expanded, error) {
+	return expand(repoID, m, map[string]bool{})
+}
+
+func expand(repoID airwaysql.IdType, m *models.Manifest, seen map[string]bool) (*Expanded, error) {
+	var doc manifestDoc
+	if err := json.Unmarshal([]byte(m.Content), &doc); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidManifest, err)
+	}
+
+	x := &Expanded{
+		Digest:       m.Digest,
+		MediaType:    m.MediaType,
+		ArtifactType: m.ArtifactType,
+		Annotations:  doc.Annotations,
+		IsIndex:      m.MediaType == MediaTypeOCIIndex || m.MediaType == MediaTypeDockerManifestList,
+	}
+	if doc.Subject != nil && doc.Subject.Digest != "" {
+		d := doc.Subject.Digest
+		x.Subject = &d
+	}
+
+	if x.IsIndex {
+		for _, c := range doc.Manifests {
+			x.Children = append(x.Children, Entry{
+				Digest:    c.Digest,
+				MediaType: c.MediaType,
+				Size:      c.Size,
+				Platform:  c.platformLabel(),
+			})
+			x.TotalSize += c.Size
+			if seen[c.Digest] {
+				continue
+			}
+			seen[c.Digest] = true
+			child, err := repo.FindOneBy[models.Manifest](airwaysql.H{
+				"repo_id": repoID,
+				"digest":  c.Digest,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if child == nil {
+				continue // deleted or never pushed; descriptor size already counted
+			}
+			expanded, err := expand(repoID, child, seen)
+			if err != nil {
+				return nil, err
+			}
+			x.TotalSize += expanded.TotalSize
+		}
+		return x, nil
+	}
+
+	if doc.Config != nil {
+		x.Config = &Entry{
+			Digest:    doc.Config.Digest,
+			MediaType: doc.Config.MediaType,
+			Size:      doc.Config.Size,
+		}
+		x.TotalSize += doc.Config.Size
+	}
+	for _, d := range append(doc.Layers, doc.Blobs...) {
+		x.Layers = append(x.Layers, Entry{
+			Digest:    d.Digest,
+			MediaType: d.MediaType,
+			Size:      d.Size,
+		})
+		x.TotalSize += d.Size
+	}
+	return x, nil
 }
 
 // Delete removes the manifest referenced by tag or digest, along with every

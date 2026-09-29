@@ -11,6 +11,7 @@ import (
 	airwaysql "github.com/daqing/airway/lib/sql"
 
 	"github.com/daqing/air-registry/app/models"
+	"github.com/daqing/air-registry/app/services/manifests"
 )
 
 // RepoSummary is one row of the web repository list.
@@ -71,6 +72,69 @@ func Page(page, perPage int, q string) (repos []RepoSummary, pageCount int, err 
 	page = max(1, min(page, pageCount))
 	start := (page - 1) * perPage
 	return summaries[start:min(start+perPage, total)], pageCount, nil
+}
+
+// TagSummary is one row of the repository detail tag table.
+type TagSummary struct {
+	Name      string
+	Digest    string
+	Size      int64
+	UpdatedAt time.Time
+}
+
+// RepoDetail is what the repository detail page shows: the tag table.
+type RepoDetail struct {
+	Name string
+	Tags []TagSummary
+}
+
+// Detail aggregates the repository detail page data. Manifest sizes come
+// from manifests.Expand, memoized per digest so tags sharing a manifest are
+// expanded once. Returns (nil, nil) when the repository does not exist.
+func Detail(repoName string) (*RepoDetail, error) {
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+	if err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, nil
+	}
+
+	tags, err := repo.FindBy[models.Tag](airwaysql.H{"repo_id": r.ID})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Name < tags[j].Name })
+
+	d := &RepoDetail{Name: r.Name, Tags: make([]TagSummary, 0, len(tags))}
+	sizes := map[string]int64{}
+	for _, t := range tags {
+		size, ok := sizes[t.ManifestDigest]
+		if !ok {
+			m, err := repo.FindOneBy[models.Manifest](airwaysql.H{
+				"repo_id": r.ID,
+				"digest":  t.ManifestDigest,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if m != nil {
+				expanded, err := manifests.Expand(r.ID, m)
+				if err != nil {
+					return nil, err
+				}
+				size = expanded.TotalSize
+			}
+			sizes[t.ManifestDigest] = size
+		}
+		d.Tags = append(d.Tags, TagSummary{
+			Name:      t.Name,
+			Digest:    t.ManifestDigest,
+			Size:      size,
+			UpdatedAt: t.UpdatedAt,
+		})
+	}
+	return d, nil
 }
 
 // Recent returns the n most recently active repositories.

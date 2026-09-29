@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/daqing/airway/lib/utils"
 
 	"github.com/daqing/air-registry/app/services/catalog"
+	"github.com/daqing/air-registry/app/services/manifests"
 	"github.com/daqing/air-registry/app/views/home"
 	"github.com/daqing/air-registry/app/views/repos"
 )
@@ -63,4 +65,64 @@ func ReposAction(c *gin.Context) {
 		Query:     q,
 		Base:      base,
 	}))
+}
+
+// RepoAction renders the repository detail page: the tag table, plus the
+// expanded manifest when ?tag= or ?digest= selects one (the two are how the
+// page drills into a tag or a referrer). Repository names have multiple
+// segments, so the route is a *path wildcard whose value is the raw name.
+func RepoAction(c *gin.Context) {
+	name := strings.TrimPrefix(c.Param("path"), "/")
+	if name == "" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	d, err := catalog.Detail(name)
+	if err != nil {
+		log.Printf("repos: detail %q: %v", name, err)
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	if d == nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	props := repos.DetailProps{Repo: d}
+	status := http.StatusOK
+
+	ref := c.Query("digest")
+	if ref == "" {
+		ref = c.Query("tag")
+	}
+	if ref != "" {
+		m, err := manifests.Find(name, ref)
+		if err != nil {
+			log.Printf("repos: find manifest %q %q: %v", name, ref, err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if m == nil {
+			props.Notice = "No manifest named " + ref
+			status = http.StatusNotFound
+		} else {
+			expanded, err := manifests.Expand(m.RepoID, m)
+			if err != nil {
+				log.Printf("repos: expand manifest %q %q: %v", name, ref, err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			referrers, err := manifests.Referrers(name, m.Digest, "")
+			if err != nil {
+				log.Printf("repos: referrers %q %q: %v", name, ref, err)
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			props.Manifest = expanded
+			props.Referrers = referrers
+		}
+	}
+
+	render.HTMLStatus(c, status, repos.Detail(props))
 }

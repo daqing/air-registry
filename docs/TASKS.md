@@ -296,15 +296,28 @@ README「目标与需求」。
   清空入口;原「分页 base 保留 q」用例改为 q 命中数据的场景(过滤生效
   后 q=foo 不再翻页)。
 
-### T18 镜像详情页
+### T18 镜像详情页 [done]
 
 - 目标:`/repos/<name>` 展示该仓库的 tag 列表与 manifest 详情。
-- 要点:
-  - tag 表:tag 名、digest、大小、推送时间。
-  - 点开 tag:layers(config + 各层,digest、size、mediaType)、总大小、
-    manifest digest、annotations。
-  - 有 referrers 时列出附件(artifactType + digest,链到对应 manifest)。
-- 验收:多 tag、多架构(index)镜像展示正确;测试覆盖。
+- 实现:
+  - 路由 `GET /repos/*path`(仓库名多级,通配接后取整段 name);`RepoAction`
+    渲染 tag 表,?tag=/?digest= 选中 manifest 时展开详情(未知引用 404
+    但仍渲染仓库 + 提示条)。
+  - `manifests.Expand`:从 content 解析 config/layers(artifact 的 blobs
+    并入 layers)、index 子项(带 platform 标签);TotalSize 对 index
+    递归累计子 manifest 内容(库中已被删的子项只计 descriptor 声明值)。
+  - `catalog.Detail`:tag 表聚合(名称排序,digest 去重后复用 Expand 的
+    size);`repos/detail.templ`:tag 表(tag/digest/大小/推送时间)、
+    manifest 区(digest、mediaType、artifactType、annotations、总大小、
+    subject 回链)、Platforms 表(index)或 Config+Layers 表、Referrers
+    表(artifactType/digest 链到 `?digest=` 可继续下钻)。
+- 验收记录(2026-09-29,tmp/t18-smoke.db + curl):e2e/pushapp 四 tag
+  (含 docker schema2 与 OCI index)列表正确;`?tag=v1` 出 config+layers
+  与总大小;`?tag=v2` 出 index 平台表(linux/arm64/v8);子 manifest 按
+  digest 下钻正常;未知仓库/未知 tag 均 404。
+- 测试覆盖:tag 表(排序、同 digest 多 tag、size 复用)、?tag= 展开
+  (config/layers/annotations/总大小)、index 展开(平台标签、递归
+  TotalSize)、referrers 列表与 subject 回链、未知仓库/未知 tag 404。
 
 ## 阶段七:收尾
 

@@ -22,3 +22,13 @@ func islandProps(page, pageCount int, base string) string {
 	}
 	return string(data)
 }
+
+// shortDigest truncates a digest for table cells; the full value stays in
+// the cell's title attribute.
+func shortDigest(d string) string {
+	const prefix = 19 // "sha256:" + 12 hex chars
+	if len(d) > prefix {
+		return d[:prefix] + "…"
+	}
+	return d
+}
