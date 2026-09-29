@@ -182,15 +182,25 @@ README「目标与需求」。
 - 验收:`curl 'http://localhost:1900/v2/_catalog?n=2'` 分页正确;测试覆盖
   (空库、排序、Link 翻页、仅 last、越界、非法 n、非 GET 405→404)。
 
-### T12 删除 manifest
+### T12 删除 manifest [done]
 
 - 目标:`DELETE /v2/<name>/manifests/<digest>`(按 tag 删除时先解析到
   digest)。
-- 要点:删除 `manifests` 行与关联 `tags` 行;`repo_blobs` 里只删本仓库
-  的关联;响应 202。document 一下:删除 subject 后其 referrers 成为孤儿,
-  当前不做级联。
-- 验收:`crane delete localhost:1900/demo/app:v1` 后再 pull 返回 404;
-  测试覆盖。
+- 实现:`manifests.Delete` — 复用 `Find` 解析引用;删除该 digest 的全部
+  tags 行与 manifests 行;对本仓库 repo_blobs 只解除"仅被此 manifest 引用"
+  的 blob 关联(同仓库其他 manifest 仍引用的保持关联,文件留给 T13 GC
+  回收);响应 202,未命中 404 `MANIFEST_UNKNOWN`。
+- **已知限制(有意不做)**:删除 subject 后,其 referrers 的
+  `subject_digest` 成为孤儿,不做级联删除/清空;index 的子 manifest 也
+  不级联(可按 digest 单独拉取/删除)。
+- 验收记录(2026-09-29,宿主机 crane v0.22.1):
+  - `crane copy busybox localhost:1930/demo/app:v1`(完整多架构 OCI
+    index,10 平台 + attestation)→ `crane delete localhost:1930/demo/app:v1`
+    → 再 `crane manifest` 返回 404 `MANIFEST_UNKNOWN`;tags/list 空。
+  - 删除 index 后子 manifest 按 digest 仍可拉(非级联);只被已删 manifest
+    引用的层解除关联(HEAD 404),仍被其他 manifest 引用的层保持 200。
+- 测试覆盖:按 digest/按 tag 删除、多 tag 指向同 digest、同仓库共享层保留、
+  跨仓库 mount 关联保留、blob 文件删除后仍在磁盘待 GC、未知引用 404。
 
 ### T13 垃圾回收(GC)
 

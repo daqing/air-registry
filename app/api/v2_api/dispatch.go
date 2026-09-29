@@ -87,6 +87,8 @@ func (h *Handler) Dispatch(c *gin.Context) {
 			h.getManifest(c, name, ref)
 		case http.MethodPut:
 			h.putManifest(c, name, ref)
+		case http.MethodDelete:
+			h.deleteManifest(c, name, ref)
 		default:
 			ociError(c, http.StatusNotFound, "UNSUPPORTED", "unsupported API endpoint")
 		}

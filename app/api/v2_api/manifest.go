@@ -65,6 +65,22 @@ func (h *Handler) getManifest(c *gin.Context, name, reference string) {
 	}
 }
 
+// deleteManifest answers DELETE /v2/<name>/manifests/<reference>: the
+// reference (tag or digest) resolves to a digest, and the manifest plus all
+// tags pointing at it are removed from the repository.
+func (h *Handler) deleteManifest(c *gin.Context, name, reference string) {
+	if err := manifests.Delete(name, reference); err != nil {
+		if errors.Is(err, manifests.ErrManifestUnknown) {
+			ociError(c, http.StatusNotFound, "MANIFEST_UNKNOWN", "manifest unknown")
+			return
+		}
+		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return
+	}
+
+	c.Status(http.StatusAccepted)
+}
+
 // listTags answers GET /v2/<name>/tags/list. The n/last pagination
 // parameters are accepted but not enforced yet.
 func (h *Handler) listTags(c *gin.Context, name string) {

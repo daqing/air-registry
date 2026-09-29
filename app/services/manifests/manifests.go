@@ -26,6 +26,7 @@ var (
 	ErrInvalidManifest = errors.New("invalid manifest")
 	ErrMissingBlob     = errors.New("manifest references unknown blob")
 	ErrInvalidTag      = errors.New("invalid tag form")
+	ErrManifestUnknown = errors.New("manifest unknown")
 )
 
 const (
@@ -197,6 +198,76 @@ func ListTags(repoName string) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// Delete removes the manifest referenced by tag or digest, along with every
+// tag pointing at it. Blobs referenced only by this manifest are unlinked
+// from the repository; blobs still referenced by other manifests in the
+// repository stay linked, and blob files / rows are left for GC (T13) to
+// reclaim. Referrer manifests whose subject was deleted are kept as-is —
+// deletion does not cascade.
+func Delete(repoName, reference string) error {
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		return ErrManifestUnknown
+	}
+
+	m, err := Find(repoName, reference)
+	if err != nil {
+		return err
+	}
+	if m == nil {
+		return ErrManifestUnknown
+	}
+
+	meta, err := Parse([]byte(m.Content), "")
+	if err != nil {
+		return err
+	}
+
+	// Digests still referenced by other manifests of this repository must
+	// keep their repo_blobs link so those manifests stay pullable.
+	others, err := repo.FindBy[models.Manifest](airwaysql.H{"repo_id": r.ID})
+	if err != nil {
+		return err
+	}
+	stillReferenced := map[string]bool{}
+	for _, o := range others {
+		if o.ID == m.ID {
+			continue
+		}
+		om, err := Parse([]byte(o.Content), "")
+		if err != nil {
+			continue // leave links; GC reconciles
+		}
+		for _, d := range om.BlobDigests {
+			stillReferenced[d] = true
+		}
+	}
+
+	for _, d := range meta.BlobDigests {
+		if stillReferenced[d] {
+			continue
+		}
+		blob, err := repo.FindOneBy[models.Blob](airwaysql.H{"digest": d})
+		if err != nil {
+			return err
+		}
+		if blob == nil {
+			continue
+		}
+		if err := repo.DeleteWhere[models.RepoBlob](airwaysql.H{"repo_id": r.ID, "blob_id": blob.ID}); err != nil {
+			return err
+		}
+	}
+
+	if err := repo.DeleteWhere[models.Tag](airwaysql.H{"repo_id": r.ID, "manifest_digest": m.Digest}); err != nil {
+		return err
+	}
+	return repo.DeleteByID[models.Manifest](m.ID)
 }
 
 // Store persists content and its metadata, upserts the repository, links
