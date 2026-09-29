@@ -382,12 +382,26 @@ README「目标与需求」。
   OCI-Subject、upload status、tags 分页、artifactType 回退);
   `go vet ./... && go test ./...` 全绿。
 
-### T21 文档与清理
+### T21 文档与清理 [done]
 
 - 目标:收尾。
-- 要点:README 补使用方式(docker 配置示例、网页入口)、已知限制;过一遍
-  代码,删掉脚手架遗留的无用文件;确认注释与实现一致。
-- 验收:`go vet ./... && go test ./...` 全绿;两份 README 同步。
+- 实现:
+  - README.md / README.zh-CN.md 重写为面向使用者的文档:快速开始、docker
+    配置示例(insecure-registries)、crane/oras、网页端入口、配置项表
+    (LISTEN/DSN/DATA_DIR/MAX_UPLOAD_SIZE/REGISTRY_AUTH_ENABLED/URL_PREFIX)、
+    GC 用法、已知限制(无认证占位、无内置 TLS、上传 session 内存态、
+    单节点 SQLite 为主、无配额/只读);删掉脚手架自带的 Desktop 应用与
+    `airway generate` 示例段落。两份内容一一对应。
+  - 删除脚手架遗留:`app/api/storage_api/`(通用文件上传 demo,含测试)、
+    `app/api/openapi_api/`(自动 openapi.json)、`v2_api`/`health_api` 的
+    openapi 描述文件、`apiGroupRoutes`/`openapiRoutes` 挂载与路由测试
+    期望、多余的 `.keep`(api/services/middlewares/db:migrate)。
+    文件按规则移入 `~/protected/tmp/`,未用 rm。
+  - 注释与实现核对:routes.go 各段注释、registrycfg 的 STORAGE_ROOT
+    兼容说明、listTags/Store 等 T20 改动处的注释均已同步;全库无
+    TODO/FIXME 漂移。
+- 验收:`go vet ./... && go test ./...` 全绿(10 个包);两份 README
+  同步更新。
 
 ## 后续扩展(暂不做,仅记录)
 

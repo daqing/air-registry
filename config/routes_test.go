@@ -24,12 +24,8 @@ func TestRoutesRegistersCoreEndpoints(t *testing.T) {
 		"GET /repos",
 		"GET /repos/*path",
 		"GET /health",
-		"GET /openapi.json",
 		"GET /ws",
 		"POST /ws/publish",
-		"POST /api/v1/storage",
-		"GET /api/v1/storage/*key",
-		"DELETE /api/v1/storage/*key",
 	}
 
 	for _, route := range expected {
