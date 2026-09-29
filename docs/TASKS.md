@@ -321,12 +321,31 @@ README「目标与需求」。
 
 ## 阶段七:收尾
 
-### T19 配置整理
+### T19 配置整理 [done]
 
 - 目标:把硬编码项收进配置。
-- 要点:storage 根目录(`DATA_DIR`,默认 `data/storage`)、上传大小上限、
-  认证开关占位(默认关,留出 middleware 扩展点)。
-- 验收:改配置生效;`.env.example` 同步;测试不依赖具体目录。
+- 实现:新服务 `app/services/registrycfg` 统一三个旋钮,均每次调用读 env
+  (与项目其他配置一致,改动需重启):
+  - `DATA_DIR`:blob 存储根目录,默认 `./data/storage`;`STORAGE_ROOT`
+    作为旧名兼容回退(原 `blobstore.DefaultRoot` 已删,调用点改走
+    `registrycfg.DataDir`,GC 子命令同);
+  - `MAX_UPLOAD_SIZE`:单请求 blob 上传上限(字节),0/未设/非法 =
+    不限(默认);超限时 monolithic POST 与 PATCH 在 body 读取处
+    `http.MaxBytesReader` 截断 → 413 `TOO_LARGE`,PATCH 超限丢弃
+    session,其余读错误仍 500 且保留 session;
+  - `REGISTRY_AUTH_ENABLED`:认证开关占位,默认关;开启后
+    `middlewares.RegistryAuth` 对 `/v2/` 一律 401(`WWW-Authenticate:
+    Basic`,OCI 错误体),credential backend(basic/htpasswd)后续接入
+    此扩展点;网页端不受该中间件影响。挂载:空前缀 group + `Routes`
+    签名放宽为 `gin.IRouter`。
+- 验收记录(2026-09-29,真实实例 + curl):`DATA_DIR=./tmp/t19-data` 时
+  blob 写入该目录且 `go run . gc` 在同一目录回收;`MAX_UPLOAD_SIZE=32`
+  时超帽 POST/PATCH 均 413 `TOO_LARGE`、帽内 201;`REGISTRY_AUTH_ENABLED=true`
+  时 `/v2/` 401 带 Basic challenge,网页 /repos 仍 200。
+- 测试覆盖:registrycfg 三个旋钮(优先级/非法回退)、中间件开/关、
+  上传超限(POST/PATCH/帽内/不限默认)、routes 测试验证开关真实挂载。
+  测试全部用 `t.TempDir()`/`t.Setenv`,不依赖具体目录。`.env.example`
+  已同步新增 Registry 小节。
 
 ### T20 OCI Distribution Spec conformance 测试
 

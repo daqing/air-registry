@@ -15,7 +15,9 @@ import (
 	"github.com/daqing/air-registry/app/api/openapi_api"
 	"github.com/daqing/air-registry/app/api/storage_api"
 	"github.com/daqing/air-registry/app/api/v2_api"
+	"github.com/daqing/air-registry/app/middlewares"
 	"github.com/daqing/air-registry/app/services/blobstore"
+	"github.com/daqing/air-registry/app/services/registrycfg"
 	"github.com/daqing/air-registry/app/services/uploads"
 	"github.com/daqing/airway/app/websocket"
 	"github.com/daqing/airway/lib/plugin"
@@ -42,12 +44,14 @@ func PublicRoutes(r *gin.Engine) {
 	r.GET("/repos", home_api.ReposAction)
 	r.GET("/repos/*path", home_api.RepoAction)
 
-	registryStore := blobstore.New(blobstore.DefaultRoot())
+	registryStore := blobstore.New(registrycfg.DataDir())
 	registryAPI := &v2_api.Handler{
 		Blobs:   registryStore,
 		Uploads: uploads.NewManager(filepath.Join(registryStore.Root, "uploads")),
 	}
-	registryAPI.Routes(r)
+	// The empty-prefix group attaches the auth middleware to the /v2 routes
+	// without changing their paths.
+	registryAPI.Routes(r.Group("", middlewares.RegistryAuth()))
 
 	assetRoutes(r)
 	websocketRoutes(r)

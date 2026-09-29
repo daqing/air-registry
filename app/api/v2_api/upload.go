@@ -2,6 +2,7 @@ package v2_api
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/daqing/air-registry/app/services/blobs"
 	"github.com/daqing/air-registry/app/services/blobstore"
+	"github.com/daqing/air-registry/app/services/registrycfg"
 	"github.com/daqing/air-registry/app/services/uploads"
 )
 
@@ -34,9 +36,9 @@ func (h *Handler) startUpload(c *gin.Context, name string) {
 			ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
 			return
 		}
-		if _, err := h.Uploads.Append(sess.UUID, c.Request.Body); err != nil {
+		if _, err := h.Uploads.Append(sess.UUID, limitUploadBody(c)); err != nil {
 			h.Uploads.Remove(sess.UUID)
-			ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+			writeUploadBodyError(c, err)
 			return
 		}
 		h.finishUpload(c, name, sess, digest)
@@ -102,8 +104,13 @@ func (h *Handler) appendUpload(c *gin.Context, name, uuid string) {
 		}
 	}
 
-	if _, err := h.Uploads.Append(uuid, c.Request.Body); err != nil {
-		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+	if _, err := h.Uploads.Append(uuid, limitUploadBody(c)); err != nil {
+		if isUploadTooLarge(err) {
+			// The session holds a truncated body; drop it so the client
+			// starts a fresh upload.
+			h.Uploads.Remove(uuid)
+		}
+		writeUploadBodyError(c, err)
 		return
 	}
 
@@ -175,6 +182,32 @@ func (h *Handler) abortUpload(c *gin.Context, name, uuid string) {
 
 func uploadLocation(name, uuid string) string {
 	return "/v2/" + name + "/blobs/uploads/" + uuid
+}
+
+// limitUploadBody caps the request body at the configured upload limit so an
+// oversized push fails fast instead of filling the disk; past the cap the
+// returned reader fails with an *http.MaxBytesError. An unlimited
+// configuration passes the body through untouched.
+func limitUploadBody(c *gin.Context) io.Reader {
+	if limit := registrycfg.MaxUploadSize(); limit > 0 {
+		return http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+	}
+	return c.Request.Body
+}
+
+func isUploadTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
+}
+
+// writeUploadBodyError maps a body read failure: over the upload cap → 413,
+// anything else → 500.
+func writeUploadBodyError(c *gin.Context, err error) {
+	if isUploadTooLarge(err) {
+		ociError(c, http.StatusRequestEntityTooLarge, "TOO_LARGE", "upload exceeds the configured size limit")
+		return
+	}
+	ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
 }
 
 // parseContentRange reads a PATCH Content-Range header: "<start>-<end>"

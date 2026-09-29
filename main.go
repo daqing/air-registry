@@ -20,6 +20,7 @@ import (
 
 	"github.com/daqing/air-registry/app/services/blobstore"
 	"github.com/daqing/air-registry/app/services/gc"
+	"github.com/daqing/air-registry/app/services/registrycfg"
 	"github.com/daqing/air-registry/config"
 )
 
@@ -53,7 +54,7 @@ func main() {
 }
 
 // runGC is the `gc` command: reclaim blobs that no manifest references.
-// It uses the same DSN/STORAGE_ROOT env vars as the server.
+// It uses the same DSN/DATA_DIR env vars as the server.
 func runGC() {
 	loadCLIEnv()
 
@@ -67,7 +68,7 @@ func runGC() {
 		os.Exit(3)
 	}
 
-	stats, err := gc.Run(blobstore.New(blobstore.DefaultRoot()))
+	stats, err := gc.Run(blobstore.New(registrycfg.DataDir()))
 	if err != nil {
 		log.Printf("gc: %v", err)
 		os.Exit(1)

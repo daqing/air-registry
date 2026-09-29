@@ -17,8 +17,6 @@ import (
 	"strings"
 )
 
-const defaultRoot = "./data/storage"
-
 var (
 	algoPattern = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
 	hexPattern  = regexp.MustCompile(`^[a-f0-9]{32,}$`)
@@ -40,15 +38,6 @@ type Store struct {
 // New returns a Store rooted at root.
 func New(root string) *Store {
 	return &Store{Root: root}
-}
-
-// DefaultRoot resolves the storage root from STORAGE_ROOT, falling back to
-// ./data/storage.
-func DefaultRoot() string {
-	if root := strings.TrimSpace(os.Getenv("STORAGE_ROOT")); root != "" {
-		return root
-	}
-	return defaultRoot
 }
 
 func parseDigest(digest string) (algo, encoded string, err error) {
