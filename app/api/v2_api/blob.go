@@ -9,22 +9,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/daqing/air-registry/app/services/blobs"
 	"github.com/daqing/air-registry/app/services/blobstore"
 )
 
 // serveBlob answers GET /v2/<name>/blobs/<digest>.
-func (h *Handler) serveBlob(c *gin.Context, digest string) {
-	if !h.validBlobDigest(c, digest) {
-		return
-	}
-
-	size, err := h.Blobs.Size(digest)
-	if errors.Is(err, fs.ErrNotExist) {
-		ociError(c, http.StatusNotFound, "BLOB_UNKNOWN", "blob unknown to registry")
-		return
-	}
-	if err != nil {
-		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+func (h *Handler) serveBlob(c *gin.Context, name, digest string) {
+	size, ok := h.blobAvailable(c, name, digest)
+	if !ok {
 		return
 	}
 
@@ -43,18 +35,9 @@ func (h *Handler) serveBlob(c *gin.Context, digest string) {
 }
 
 // checkBlob answers HEAD /v2/<name>/blobs/<digest>.
-func (h *Handler) checkBlob(c *gin.Context, digest string) {
-	if !h.validBlobDigest(c, digest) {
-		return
-	}
-
-	size, err := h.Blobs.Size(digest)
-	if errors.Is(err, fs.ErrNotExist) {
-		ociError(c, http.StatusNotFound, "BLOB_UNKNOWN", "blob unknown to registry")
-		return
-	}
-	if err != nil {
-		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+func (h *Handler) checkBlob(c *gin.Context, name, digest string) {
+	size, ok := h.blobAvailable(c, name, digest)
+	if !ok {
 		return
 	}
 
@@ -62,6 +45,37 @@ func (h *Handler) checkBlob(c *gin.Context, digest string) {
 	c.Header("Docker-Content-Digest", digest)
 	c.Header("Content-Length", strconv.FormatInt(size, 10))
 	c.Status(http.StatusOK)
+}
+
+// blobAvailable validates digest, then requires the blob to be stored on
+// disk AND linked to name; it answers the request with the proper OCI error
+// (400 / 404 / 500) and reports false otherwise.
+func (h *Handler) blobAvailable(c *gin.Context, name, digest string) (int64, bool) {
+	if !h.validBlobDigest(c, digest) {
+		return 0, false
+	}
+
+	size, err := h.Blobs.Size(digest)
+	if errors.Is(err, fs.ErrNotExist) {
+		ociError(c, http.StatusNotFound, "BLOB_UNKNOWN", "blob unknown to registry")
+		return 0, false
+	}
+	if err != nil {
+		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return 0, false
+	}
+
+	linked, err := blobs.Linked(name, digest)
+	if err != nil {
+		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return 0, false
+	}
+	if !linked {
+		ociError(c, http.StatusNotFound, "BLOB_UNKNOWN", "blob unknown to registry")
+		return 0, false
+	}
+
+	return size, true
 }
 
 // validBlobDigest answers the request with 400 on malformed digests and

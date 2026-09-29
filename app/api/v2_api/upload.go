@@ -14,21 +14,26 @@ import (
 	"github.com/daqing/air-registry/app/services/uploads"
 )
 
-// startUpload answers POST /v2/<name>/blobs/uploads/ — with ?digest= and a
-// body it completes in one shot (monolithic), otherwise it opens a session.
+// startUpload answers POST /v2/<name>/blobs/uploads/ — with ?mount=<digest>&from=<repo>
+// it attempts a cross-repo mount, with ?digest= and a body it completes in
+// one shot (monolithic), otherwise it opens a session.
 func (h *Handler) startUpload(c *gin.Context, name string) {
 	if !validRepoName(name) {
 		ociError(c, http.StatusBadRequest, "NAME_INVALID", "invalid repository name")
 		return
 	}
 
-	sess, err := h.Uploads.Start(name)
-	if err != nil {
-		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+	if digest, from := c.Query("mount"), c.Query("from"); digest != "" && from != "" {
+		h.mountBlob(c, name, from, digest)
 		return
 	}
 
 	if digest := c.Query("digest"); digest != "" {
+		sess, err := h.Uploads.Start(name)
+		if err != nil {
+			ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+			return
+		}
 		if _, err := h.Uploads.Append(sess.UUID, c.Request.Body); err != nil {
 			h.Uploads.Remove(sess.UUID)
 			ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
@@ -38,10 +43,46 @@ func (h *Handler) startUpload(c *gin.Context, name string) {
 		return
 	}
 
+	h.startUploadSession(c, name)
+}
+
+// startUploadSession opens a fresh upload session and answers 202 with the
+// session's Location and UUID.
+func (h *Handler) startUploadSession(c *gin.Context, name string) {
+	sess, err := h.Uploads.Start(name)
+	if err != nil {
+		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return
+	}
+
 	c.Header("Location", uploadLocation(name, sess.UUID))
 	c.Header("Range", "0-0")
 	c.Header("Docker-Upload-UUID", sess.UUID)
 	c.Status(http.StatusAccepted)
+}
+
+// mountBlob answers POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<repo>.
+// When from holds the digest, the blob is linked into name without moving
+// bytes and 201 is returned; otherwise the request degrades to a normal
+// upload session (202) so the client can push the content.
+func (h *Handler) mountBlob(c *gin.Context, name, from, digest string) {
+	if !h.validBlobDigest(c, digest) {
+		return
+	}
+
+	mounted, err := blobs.Mount(name, from, digest)
+	if err != nil {
+		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return
+	}
+	if !mounted {
+		h.startUploadSession(c, name)
+		return
+	}
+
+	c.Header("Docker-Content-Digest", digest)
+	c.Header("Location", "/v2/"+name+"/blobs/"+digest)
+	c.Status(http.StatusCreated)
 }
 
 // appendUpload answers PATCH (continue) and PUT (finalize) on

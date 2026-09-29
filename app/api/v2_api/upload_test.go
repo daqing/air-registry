@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -309,6 +310,51 @@ func TestPutWithoutDigest(t *testing.T) {
 	}
 	if !bytes.Contains(w.Body.Bytes(), []byte("DIGEST_INVALID")) {
 		t.Fatalf("expected DIGEST_INVALID, got %q", w.Body.String())
+	}
+}
+
+// Regression guard: docker pushes layers concurrently, and every concurrent
+// upload to a fresh repository used to lose the repositories-name race with
+// a 500 UNIQUE constraint error.
+func TestConcurrentMonolithicUploadsToNewRepo(t *testing.T) {
+	r, _ := setupUploadServer(t)
+
+	const n = 8
+	type result struct {
+		code int
+		body string
+	}
+	results := make(chan result, n)
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			data := bytes.Repeat([]byte{byte(i)}, 16*1024+i)
+			digest := digestOf(data)
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v2/race/test/blobs/uploads/?digest="+digest, bytes.NewReader(data))
+			r.ServeHTTP(w, req)
+			results <- result{w.Code, w.Body.String()}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+
+	for res := range results {
+		if res.code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d (%s)", res.code, res.body)
+		}
+	}
+
+	repoRow, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": "race/test"})
+	if err != nil || repoRow == nil {
+		t.Fatalf("expected one repository row, got %+v (%v)", repoRow, err)
+	}
+	links, err := repo.CountWhere[models.RepoBlob](airwaysql.H{"repo_id": repoRow.ID})
+	if err != nil || links != n {
+		t.Fatalf("expected %d repo_blobs links, got %d (%v)", n, links, err)
 	}
 }
 

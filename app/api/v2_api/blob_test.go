@@ -16,23 +16,27 @@ import (
 
 	"github.com/daqing/airway/lib/migrate"
 
+	"github.com/daqing/air-registry/app/services/blobs"
 	"github.com/daqing/air-registry/app/services/blobstore"
 )
 
-func setupBlobServer(t *testing.T, data []byte) (*gin.Engine, string) {
+func setupBlobServer(t *testing.T, repoName string, data []byte) (*gin.Engine, string) {
 	t.Helper()
 
-	store := blobstore.New(t.TempDir())
-	sum := sha256.Sum256(data)
-	digest := "sha256:" + hex.EncodeToString(sum[:])
+	r, store := setupUploadServer(t)
+	digest := digestOf(data)
 
 	if _, err := store.Put(bytes.NewReader(data), digest); err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}
+	relPath, err := blobstore.RelativePath(digest)
+	if err != nil {
+		t.Fatalf("blob path: %v", err)
+	}
+	if err := blobs.RegisterUpload(repoName, digest, int64(len(data)), relPath); err != nil {
+		t.Fatalf("register blob: %v", err)
+	}
 
-	h := &Handler{Blobs: store}
-	r := gin.New()
-	h.Routes(r)
 	return r, digest
 }
 
@@ -64,7 +68,7 @@ func randomBytes(t *testing.T, n int) []byte {
 
 func TestServeBlobRoundTrip(t *testing.T) {
 	data := randomBytes(t, 512*1024)
-	r, digest := setupBlobServer(t, data)
+	r, digest := setupBlobServer(t, "library/nginx", data)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/library/nginx/blobs/"+digest, nil)
@@ -86,7 +90,7 @@ func TestServeBlobRoundTrip(t *testing.T) {
 
 func TestServeBlobSingleSegmentName(t *testing.T) {
 	data := []byte("tiny")
-	r, digest := setupBlobServer(t, data)
+	r, digest := setupBlobServer(t, "app", data)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/app/blobs/"+digest, nil)
@@ -101,7 +105,7 @@ func TestServeBlobSingleSegmentName(t *testing.T) {
 }
 
 func TestServeBlobUnknownDigestReturns404(t *testing.T) {
-	r, _ := setupBlobServer(t, []byte("x"))
+	r, _ := setupBlobServer(t, "app", []byte("x"))
 
 	missing := "sha256:" + hex.EncodeToString(make([]byte, 32))
 	w := httptest.NewRecorder()
@@ -117,7 +121,7 @@ func TestServeBlobUnknownDigestReturns404(t *testing.T) {
 }
 
 func TestServeBlobMalformedDigestReturns400(t *testing.T) {
-	r, _ := setupBlobServer(t, []byte("x"))
+	r, _ := setupBlobServer(t, "app", []byte("x"))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/app/blobs/not-a-digest", nil)
@@ -133,7 +137,7 @@ func TestServeBlobMalformedDigestReturns400(t *testing.T) {
 
 func TestServeBlobInvalidRepoNameReturns400(t *testing.T) {
 	data := []byte("x")
-	r, digest := setupBlobServer(t, data)
+	r, digest := setupBlobServer(t, "app", data)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/Bad_Name/blobs/"+digest, nil)
@@ -149,7 +153,7 @@ func TestServeBlobInvalidRepoNameReturns400(t *testing.T) {
 
 func TestCheckBlob(t *testing.T) {
 	data := randomBytes(t, 2048)
-	r, digest := setupBlobServer(t, data)
+	r, digest := setupBlobServer(t, "library/nginx", data)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodHead, "/v2/library/nginx/blobs/"+digest, nil)
@@ -167,7 +171,7 @@ func TestCheckBlob(t *testing.T) {
 }
 
 func TestCheckBlobMissingReturns404(t *testing.T) {
-	r, _ := setupBlobServer(t, []byte("x"))
+	r, _ := setupBlobServer(t, "app", []byte("x"))
 
 	missing := "sha256:" + hex.EncodeToString(bytes.Repeat([]byte{0xff}, 32))
 	w := httptest.NewRecorder()
@@ -180,7 +184,7 @@ func TestCheckBlobMissingReturns404(t *testing.T) {
 }
 
 func TestDispatchUnknownEndpointReturns404(t *testing.T) {
-	r, digest := setupBlobServer(t, []byte("x"))
+	r, digest := setupBlobServer(t, "app", []byte("x"))
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/app/whatever/"+digest, nil)
@@ -195,7 +199,7 @@ func TestServeBlobStreamsContent(t *testing.T) {
 	// Regression guard: the handler must stream through io.Copy, so a blob
 	// larger than any buffer still arrives intact.
 	data := randomBytes(t, 4*1024*1024)
-	r, digest := setupBlobServer(t, data)
+	r, digest := setupBlobServer(t, "big/blob", data)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v2/big/blob/blobs/"+digest, nil)
@@ -210,5 +214,36 @@ func TestServeBlobStreamsContent(t *testing.T) {
 	}
 	if !bytes.Equal(got, data) {
 		t.Fatalf("streamed blob corrupted")
+	}
+}
+
+func TestServeBlobUnlinkedRepoReturns404(t *testing.T) {
+	data := []byte("linked to another repo only")
+	r, digest := setupBlobServer(t, "demo/base", data)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v2/demo/app/blobs/"+digest, nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d (%s)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !bytes.Contains([]byte(body), []byte("BLOB_UNKNOWN")) {
+		t.Fatalf("expected BLOB_UNKNOWN error body, got %q", body)
+	}
+}
+
+func TestCheckBlobUnlinkedRepoReturns404(t *testing.T) {
+	data := []byte("linked to another repo only")
+	r, digest := setupBlobServer(t, "demo/base", data)
+
+	// Docker probes blobs with HEAD before deciding to upload or mount;
+	// an unlinked blob must look unknown so pushes (and mounts) trigger.
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodHead, "/v2/demo/app/blobs/"+digest, nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d", w.Code)
 	}
 }

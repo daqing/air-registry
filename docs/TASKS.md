@@ -60,6 +60,9 @@ README「目标与需求」。
   - 从 T02 的 blobstore 取流,响应带 `Docker-Content-Digest` 头;未命中
     返回 404 `BLOB_UNKNOWN`。
   - digest 格式非法 → 400;格式合法但不存在 → 404。
+  - **T09 起按仓库校验**:HEAD/GET 要求 blob 已关联本仓库(repo_blobs),
+    磁盘有但未挂载/上传到本仓库 → 404,否则跨仓库"已存在"会让客户端
+    跳过 mount/upload。
 - 验收:测试塞入 blob 后下载字节一致;404 路径有测试。
 
 ### T05 manifest 写入服务 + `PUT /v2/<name>/manifests/<reference>` [done]
@@ -99,6 +102,15 @@ README「目标与需求」。
 > 复验步骤:宿主机 `LISTEN=":1930" DSN=... go run .`,VM 里对
 > `192.168.5.2:1930/<name>` 推拉即可。该 VM 已 `limactl stop`,可
 > `limactl delete reg-verify` 删除。T10 的 pull 验收已顺带预验证。
+>
+> **T09 复验时发现的 VM 环境坑**(rootless docker 模板与 T07 当时不同):
+> - 生效的 daemon 配置是 `~/.config/docker/daemon.json`,要在这里加
+>   `insecure-registries`(改 `/etc/docker/daemon.json` 无效);
+> - VM 继承的 `http_proxy=192.168.5.2:9567` 会拦截 dockerd 到宿主机的
+>   请求,需给 user 级 docker.service 加 drop-in:
+>   `~/.config/systemd/user/docker.service.d/no-proxy.conf`,内容为
+>   `[Service]` + `Environment="NO_PROXY=192.168.5.2"`。
+>   这两项 T09 时已配好并留在 VM 磁盘里,`limactl start` 后直接可用。
 
 - 目标:docker push 走的主链路。
 - 要点:
@@ -116,11 +128,28 @@ README「目标与需求」。
   非法 offset / digest 不符报错。
 - 验收:`crane push`(走 chunked)成功;测试覆盖多次 PATCH 续传。
 
-### T09 跨仓库 blob mount
+### T09 跨仓库 blob mount [done]
+
+> 注:已用 reg-verify VM(lima)里的真实 docker 复验。同一 busybox 推到
+> `mount-test/base` 再推到 `mount-test/app`,后者输出
+> `55d2dadd4bbc: Mounted from mount-test/base`;服务端日志确认
+> `POST .../mount-test/app/blobs/uploads/?mount=<digest>&from=mount-test/base`
+> 返回 201,而 base 首次推送时 `?from=mount-test/app` 不命中返回 202
+> 并自动降级为普通上传(docker 会按本地 tag 自动尝试兄弟仓库)。磁盘上
+> 两个仓库共享同一份 blob 文件。VM 环境坑见 T07 注。
 
 - 目标:`POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<repo>`。
 - 要点:目标 digest 在 `from` 仓库存在时,直接复制 `repo_blobs` 关联,
   返回 201 + `Docker-Content-Digest`;不存在则降级为普通上传(202)。
+- 实现:`blobs.Mount`(源仓库→blob→repo_blobs 三段校验,幂等链接);
+  `startUpload` 识别 `mount`+`from` 参数;digest 非法仍 400。
+- 顺手修了两个验收中暴露的问题:
+  - **并发上传竞态**:docker 并行推层,新仓库首次并发 `POST ?digest=` 时
+    `EnsureRepository` 撞 `UNIQUE constraint failed: repositories.name` 返回
+    500;`EnsureRepository`/`ensureBlob`/`linkBlobToRepo` 均改为撞约束后
+    重读并接受已有行(有回归测试 `TestConcurrentMonolithicUploadsToNewRepo`)。
+  - **blob HEAD/GET 按仓库校验**(见 T04 注):否则磁盘全局内容寻址会让
+    客户端误以为目标仓库已有 blob,永远走不到 mount。
 - 验收:同一份基础镜像推到两个仓库,docker 日志确认走了 mount;测试覆盖
   命中与降级两条路径。
 

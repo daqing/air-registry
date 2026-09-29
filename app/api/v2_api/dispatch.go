@@ -88,9 +88,9 @@ func (h *Handler) Dispatch(c *gin.Context) {
 			return
 		}
 		if c.Request.Method == http.MethodHead {
-			h.checkBlob(c, digest)
+			h.checkBlob(c, name, digest)
 		} else {
-			h.serveBlob(c, digest)
+			h.serveBlob(c, name, digest)
 		}
 		return
 	}
