@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -188,6 +189,131 @@ func TestUploadInvalidRepoName(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
+}
+
+func TestMultiplePatchesThenPut(t *testing.T) {
+	r, store := setupUploadServer(t)
+	data := randomBytes(t, 500*1024)
+	digest := digestOf(data)
+
+	location, _ := startSession(t, r, "demo/app")
+
+	// Three chunks of uneven size, no Content-Range (plain append).
+	cuts := []int{100 * 1024, 230 * 1024, 500 * 1024}
+	prev := 0
+	for _, cut := range cuts {
+		w := uploadRequest(t, r, http.MethodPatch, location, data[prev:cut])
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("patch %d: expected 202, got %d (%s)", cut, w.Code, w.Body.String())
+		}
+		wantRange := "0-" + itoa(cut-1)
+		if got := w.Header().Get("Range"); got != wantRange {
+			t.Fatalf("expected Range %q, got %q", wantRange, got)
+		}
+		prev = cut
+	}
+
+	w := uploadRequest(t, r, http.MethodPut, location+"?digest="+digest, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("put: expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	assertBlobRegistered(t, store, "demo/app", digest, data)
+}
+
+func TestPatchWithContentRange(t *testing.T) {
+	r, store := setupUploadServer(t)
+	data := randomBytes(t, 100*1024)
+	digest := digestOf(data)
+
+	location, _ := startSession(t, r, "demo/app")
+
+	patch := func(rangeHeader string, chunk []byte) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1"+location, bytes.NewReader(chunk))
+		if rangeHeader != "" {
+			req.Header.Set("Content-Range", rangeHeader)
+		}
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	w := patch("0-65535", data[:64*1024])
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("first ranged patch: expected 202, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Range"); got != "0-65535" {
+		t.Fatalf("expected Range 0-65535, got %q", got)
+	}
+
+	w = patch("bytes=65536-102399", data[64*1024:])
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("bytes= prefixed range: expected 202, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	w = uploadRequest(t, r, http.MethodPut, location+"?digest="+digest, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("put: expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	assertBlobRegistered(t, store, "demo/app", digest, data)
+}
+
+func TestPatchContentRangeMismatch(t *testing.T) {
+	r, _ := setupUploadServer(t)
+	data := randomBytes(t, 50*1024)
+
+	location, _ := startSession(t, r, "demo/app")
+
+	patch := func(rangeHeader string, chunk []byte) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPatch, "http://127.0.0.1"+location, bytes.NewReader(chunk))
+		req.Header.Set("Content-Range", rangeHeader)
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	// Gap: claims start at 10 but session is empty.
+	w := patch("10-19", data[:10])
+	if w.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected 416, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	// Valid write of 10 bytes.
+	w = patch("0-9", data[:10])
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", w.Code)
+	}
+
+	// Overlap: claims start at 5, session is at 10.
+	w = patch("5-19", data[10:20])
+	if w.Code != http.StatusRequestedRangeNotSatisfiable {
+		t.Fatalf("expected 416 for overlap, got %d", w.Code)
+	}
+
+	// Malformed values.
+	for _, bad := range []string{"abc", "1-0", "-5", "5-"} {
+		w = patch(bad, data[:1])
+		if w.Code != http.StatusRequestedRangeNotSatisfiable {
+			t.Fatalf("range %q: expected 416, got %d", bad, w.Code)
+		}
+	}
+}
+
+func TestPutWithoutDigest(t *testing.T) {
+	r, _ := setupUploadServer(t)
+
+	location, _ := startSession(t, r, "demo/app")
+
+	w := uploadRequest(t, r, http.MethodPut, location, []byte("data"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d (%s)", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("DIGEST_INVALID")) {
+		t.Fatalf("expected DIGEST_INVALID, got %q", w.Body.String())
+	}
+}
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
 }
 
 func assertBlobRegistered(t *testing.T, store *blobstore.Store, repoName, digest string, data []byte) {

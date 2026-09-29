@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -50,6 +51,14 @@ func (h *Handler) appendUpload(c *gin.Context, name, uuid string) {
 	if !ok || sess.Repo != name {
 		ociError(c, http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", "upload session unknown")
 		return
+	}
+
+	if cr := c.GetHeader("Content-Range"); cr != "" {
+		start, ok := parseContentRange(cr)
+		if !ok || start != sess.Offset {
+			ociError(c, http.StatusRequestedRangeNotSatisfiable, "REQUESTED_RANGE_NOT_SATISFIABLE", "content range does not match upload offset")
+			return
+		}
 	}
 
 	if _, err := h.Uploads.Append(uuid, c.Request.Body); err != nil {
@@ -125,6 +134,28 @@ func (h *Handler) abortUpload(c *gin.Context, name, uuid string) {
 
 func uploadLocation(name, uuid string) string {
 	return "/v2/" + name + "/blobs/uploads/" + uuid
+}
+
+// parseContentRange reads a PATCH Content-Range header: "<start>-<end>"
+// (an optional "bytes=" prefix is tolerated). Only the start matters for
+// validation; end is checked for shape when present.
+func parseContentRange(value string) (int64, bool) {
+	value = strings.TrimSpace(strings.TrimPrefix(value, "bytes="))
+	startStr, endStr, hasEnd := strings.Cut(value, "-")
+	if startStr == "" {
+		return 0, false
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(startStr), 10, 64)
+	if err != nil || start < 0 {
+		return 0, false
+	}
+	if hasEnd && strings.TrimSpace(endStr) != "" {
+		end, err := strconv.ParseInt(strings.TrimSpace(endStr), 10, 64)
+		if err != nil || end < start {
+			return 0, false
+		}
+	}
+	return start, true
 }
 
 func maxInt64(a, b int64) int64 {

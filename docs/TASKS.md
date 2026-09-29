@@ -109,7 +109,7 @@ README「目标与需求」。
   - 上传状态可放内存 map(UUID → 临时文件),重启丢弃即可(客户端会重试)。
 - 验收:`docker push localhost:1900/demo/app:v1` 成功,docker 能完整推完。
 
-### T08 blob 分块上传
+### T08 blob 分块上传 [done]
 
 - 目标:`PATCH`(可多次,`Content-Range` 续传)+ 最后一次 `PUT ?digest=`。
 - 要点:维护已写 offset,每次响应 `Range: 0-<n-1>`;`PUT` 时统一校验 digest;
