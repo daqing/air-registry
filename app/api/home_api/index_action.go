@@ -34,14 +34,15 @@ func IndexAction(c *gin.Context) {
 }
 
 // ReposAction renders the paginated repository list. ?page= selects the
-// page (1-based, clamped); q is reserved for search (T17).
+// page (1-based, clamped); ?q= filters repositories by name (substring).
 func ReposAction(c *gin.Context) {
 	page, err := strconv.Atoi(c.DefaultQuery("page", "1"))
 	if err != nil || page < 1 {
 		page = 1
 	}
 
-	repoPage, pageCount, err := catalog.Page(page, reposPageSize)
+	q := c.Query("q")
+	repoPage, pageCount, err := catalog.Page(page, reposPageSize, q)
 	if err != nil {
 		log.Printf("repos: list repositories: %v", err)
 		c.Status(http.StatusInternalServerError)
@@ -59,6 +60,7 @@ func ReposAction(c *gin.Context) {
 		Repos:     repoPage,
 		Page:      page,
 		PageCount: pageCount,
+		Query:     q,
 		Base:      base,
 	}))
 }

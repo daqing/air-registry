@@ -241,8 +241,74 @@ func TestReposActionKeepsQueryInPaginationBase(t *testing.T) {
 		seedRepo(t, "repo/q"+string(rune('a'+i)), 100, time.Now().Add(time.Duration(-i)*time.Hour))
 	}
 
-	w := getPage(t, r, "/repos?q=foo")
-	if !strings.Contains(w.Body.String(), `"base":"/repos?q=foo"`) {
+	w := getPage(t, r, "/repos?q=repo")
+	if !strings.Contains(w.Body.String(), `"base":"/repos?q=repo"`) {
 		t.Fatalf("expected q preserved in the pagination base, got %q", w.Body.String())
+	}
+}
+
+func TestReposActionSearchFiltersByName(t *testing.T) {
+	r := setupWebServer(t)
+	seedRepo(t, "demo/app", 100, time.Now().Add(-2*time.Hour))
+	seedRepo(t, "library/nginx", 200, time.Now().Add(-time.Hour))
+
+	w := getPage(t, r, "/repos?q=nginx")
+	body := w.Body.String()
+	if !strings.Contains(body, "library/nginx") {
+		t.Fatalf("expected library/nginx in the search results, got %q", body)
+	}
+	if strings.Contains(body, "demo/app") {
+		t.Fatalf("did not expect demo/app in the search results, got %q", body)
+	}
+	if !strings.Contains(body, "Results for") {
+		t.Fatalf("expected a results caption for the query, got %q", body)
+	}
+}
+
+func TestReposActionSearchEscapesLikeWildcards(t *testing.T) {
+	r := setupWebServer(t)
+	seedRepo(t, "demo/app", 100, time.Now().Add(-2*time.Hour))
+	seedRepo(t, "demo/100%", 100, time.Now().Add(-3*time.Hour))
+	seedRepo(t, "under_score/x", 100, time.Now().Add(-4*time.Hour))
+
+	// '%' is a LIKE wildcard; it must match a literal '%' only.
+	w := getPage(t, r, "/repos?q=%25") // %25 → '%'
+	body := w.Body.String()
+	if !strings.Contains(body, "demo/100%") || strings.Contains(body, "demo/app") {
+		t.Fatalf("expected only the literal %q match, got %q", "%", body)
+	}
+
+	// Same for '_'.
+	w = getPage(t, r, "/repos?q=_")
+	body = w.Body.String()
+	if !strings.Contains(body, "under_score/x") || strings.Contains(body, "demo/app") {
+		t.Fatalf("expected only the literal _ match, got %q", body)
+	}
+
+	// Backslash and quote must not break the query.
+	w = getPage(t, r, "/repos?q=%5C") // %5C → '\'
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for a backslash query, got %d", w.Code)
+	}
+	w = getPage(t, r, "/repos?q=app%27") // app'
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for a quoted query, got %d", w.Code)
+	}
+}
+
+func TestReposActionSearchNoResultsShowsClearSearch(t *testing.T) {
+	r := setupWebServer(t)
+	seedRepo(t, "demo/app", 100, time.Now().Add(-time.Hour))
+
+	w := getPage(t, r, "/repos?q=nomatch")
+	body := w.Body.String()
+	if !strings.Contains(body, `class="aw-empty"`) {
+		t.Fatalf("expected an empty state, got %q", body)
+	}
+	if !strings.Contains(body, "No repositories match") {
+		t.Fatalf("expected a no-results message, got %q", body)
+	}
+	if !strings.Contains(body, "Clear search") || !strings.Contains(body, `href="/repos"`) {
+		t.Fatalf("expected a clear-search entry, got %q", body)
 	}
 }

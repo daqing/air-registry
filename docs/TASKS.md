@@ -280,12 +280,21 @@ README「目标与需求」。
   覆盖:首页渲染/空态/最近倒序、列表空态、分页(page=2/越界钳制/非法
   值)、q 保留;curl 冒烟 12 仓库两页 + dev bundle 含分页 island。
 
-### T17 镜像搜索
+### T17 镜像搜索 [done]
 
 - 目标:按仓库名模糊搜索。
-- 要点:搜索走 `/repos?q=`,SQL `LIKE`(注意转义 `%`/`_`);结果页与列表页
-  复用;无结果显示 empty state + 清空搜索入口。
-- 验收:输入关键词过滤正确,特殊字符不报错;测试覆盖。
+- 实现:`catalog.Page(page, perPage, q)` 增加按名过滤,SQL
+  `name LIKE @pattern ESCAPE '\'`(`escapeLike` 转义 `%`/`_`/`\`,用户输入
+  全部按字面匹配);`ReposAction` 透传 `q`;列表页标题下显示
+  `Results for "q"`,无结果时 empty state 带 Clear search 入口(链回
+  /repos);分页 base 保留 q(T16 已就绪)。
+- 验收记录(2026-09-29,tmp/t17-smoke.db + curl):`q=e2e` 命中全部 3 条、
+  `q=push` 只命中 e2e/pushapp、`q=%`/`q=_` 仅命中 `weird/100%_x`
+  (通配符被转义,未退化为全匹配)、`q=weird\` 等特殊字符 200 不报错、
+  无结果时正确渲染 empty state + Clear search。
+- 测试覆盖:关键词过滤、通配符转义(`%`/`_`/反斜杠/引号)、空结果的
+  清空入口;原「分页 base 保留 q」用例改为 q 命中数据的场景(过滤生效
+  后 q=foo 不再翻页)。
 
 ### T18 镜像详情页
 

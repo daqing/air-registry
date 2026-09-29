@@ -12,25 +12,39 @@ type ListProps struct {
 	Repos     []catalog.RepoSummary
 	Page      int
 	PageCount int
+	// Query is the current search term (?q=), empty when listing all.
+	Query string
 	// Base is the pagination base URL, e.g. "/repos?q=foo"; the island
 	// appends &page=N.
 	Base string
 }
 
 // List renders the paginated repository list: name, tag count, total size
-// and last activity, ordered by most recent activity.
+// and last activity, ordered by most recent activity. When props.Query is
+// set, the list holds only substring matches and the empty state offers a
+// way to clear the search.
 templ List(props ListProps) {
 	@layouts.Registry("Repositories · Air Registry") {
 		<div class="section-head">
 			<h1>Repositories</h1>
+			if props.Query != "" {
+				<span class="muted">Results for &ldquo;{ props.Query }&rdquo;</span>
+			}
 		</div>
 		if len(props.Repos) == 0 {
 			<div class="aw-empty">
-				<div class="aw-empty-title">No repositories</div>
-				<div>
-					Push an image with <code>docker push</code> to create one, e.g.
-					<code>docker push localhost:1905/demo/app:v1</code>
-				</div>
+				if props.Query != "" {
+					<div class="aw-empty-title">No repositories match &ldquo;{ props.Query }&rdquo;</div>
+					<div>
+						<a href={ templ.URL(utils.URLPrefix() + "/repos") }>Clear search</a>
+					</div>
+				} else {
+					<div class="aw-empty-title">No repositories</div>
+					<div>
+						Push an image with <code>docker push</code> to create one, e.g.
+						<code>docker push localhost:1905/demo/app:v1</code>
+					</div>
+				}
 			</div>
 		} else {
 			<div class="aw-table-wrap">

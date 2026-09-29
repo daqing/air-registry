@@ -4,6 +4,7 @@ package catalog
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/daqing/airway/lib/repo"
@@ -56,9 +57,11 @@ func List(last string, n int) (names []string, hasMore bool, err error) {
 // Page returns the page-th (1-based) chunk of repositories ordered by most
 // recent activity, plus the total page count. Out-of-range pages clamp to
 // the first/last page. Activity is derived from the newest tag or manifest
-// of the repository, falling back to the repository row itself.
-func Page(page, perPage int) (repos []RepoSummary, pageCount int, err error) {
-	summaries, err := allSummaries()
+// of the repository, falling back to the repository row itself. When q is
+// non-empty, only repositories whose name contains q are returned (LIKE,
+// wildcards in q escaped).
+func Page(page, perPage int, q string) (repos []RepoSummary, pageCount int, err error) {
+	summaries, err := allSummaries(q)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -72,15 +75,20 @@ func Page(page, perPage int) (repos []RepoSummary, pageCount int, err error) {
 
 // Recent returns the n most recently active repositories.
 func Recent(n int) ([]RepoSummary, error) {
-	summaries, err := allSummaries()
+	summaries, err := allSummaries("")
 	if err != nil {
 		return nil, err
 	}
 	return summaries[:min(n, len(summaries))], nil
 }
 
-func allSummaries() ([]RepoSummary, error) {
-	all, err := repo.FindAll[models.Repository]()
+func allSummaries(q string) ([]RepoSummary, error) {
+	b := airwaysql.Select("*").
+		FromTable(airwaysql.TableFor(models.Repository{}))
+	if q != "" {
+		b = b.Where(nameMatches(q))
+	}
+	all, err := repo.Find[models.Repository](repo.CurrentDB(), b)
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +131,22 @@ func allSummaries() ([]RepoSummary, error) {
 		return summaries[i].UpdatedAt.After(summaries[j].UpdatedAt)
 	})
 	return summaries, nil
+}
+
+// nameMatches builds a substring match on the repository name, treating the
+// user's q literally by escaping the LIKE wildcards.
+func nameMatches(q string) airwaysql.CondBuilder {
+	return airwaysql.RawCondition(
+		`name LIKE @name_pattern ESCAPE '\'`,
+		airwaysql.NamedArgs{"name_pattern": "%" + escapeLike(q) + "%"},
+	)
+}
+
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 func linkedBlobSize(repoID airwaysql.IdType) (int64, error) {
