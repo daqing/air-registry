@@ -403,6 +403,17 @@ README「目标与需求」。
 - 验收:`go vet ./... && go test ./...` 全绿(10 个包);两份 README
   同步更新。
 
+### T22 修复单段仓库名的上传路由 [done]
+
+- 目标:`postgres` 这类不带斜杠的仓库名无法推送。
+- 实现:`dispatch.go` 的 `parseUploadStartRef` / `parseUploadSessionRef`
+  各多要求了一段路径,单段名匹配不上上传路由,fallthrough 到 blob 路由
+  把 `uploads` 当 digest 报 `400 invalid digest "uploads"`;改为 ≥3 / ≥4
+  段。新增 `TestSingleSegmentRepoUpload` 覆盖 monolithic POST 与
+  POST+PUT session 两条路径(原有测试全用两段名,未暴露此问题)。
+- 验收:`go test ./...` 全绿;`nerdctl push
+  air-registry.localhost:8443/postgres:latest` 端到端通过。
+
 ## 后续扩展(暂不做,仅记录)
 
 - HTTP basic auth(推拉分权)、htpasswd 风格用户管理

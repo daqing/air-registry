@@ -141,7 +141,7 @@ func parseBlobRef(segs []string) (name, digest string, ok bool) {
 // parseUploadStartRef matches "<name>/blobs/uploads" where <name> may span
 // multiple path segments.
 func parseUploadStartRef(segs []string) (name string, ok bool) {
-	if len(segs) < 4 || segs[len(segs)-2] != "blobs" || segs[len(segs)-1] != "uploads" {
+	if len(segs) < 3 || segs[len(segs)-2] != "blobs" || segs[len(segs)-1] != "uploads" {
 		return "", false
 	}
 	name = strings.Join(segs[:len(segs)-2], "/")
@@ -150,7 +150,7 @@ func parseUploadStartRef(segs []string) (name string, ok bool) {
 
 // parseUploadSessionRef matches "<name>/blobs/uploads/<uuid>".
 func parseUploadSessionRef(segs []string) (name, uuid string, ok bool) {
-	if len(segs) < 5 || segs[len(segs)-3] != "blobs" || segs[len(segs)-2] != "uploads" {
+	if len(segs) < 4 || segs[len(segs)-3] != "blobs" || segs[len(segs)-2] != "uploads" {
 		return "", "", false
 	}
 	name = strings.Join(segs[:len(segs)-3], "/")

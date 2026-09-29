@@ -91,6 +91,24 @@ func TestMonolithicPostWithDigest(t *testing.T) {
 	assertBlobRegistered(t, store, "demo/app", digest, data)
 }
 
+func TestSingleSegmentRepoUpload(t *testing.T) {
+	r, store := setupUploadServer(t)
+	data := randomBytes(t, 32*1024)
+	digest := digestOf(data)
+
+	w := uploadRequest(t, r, http.MethodPost, "/v2/postgres/blobs/uploads/?digest="+digest, data)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	assertBlobRegistered(t, store, "postgres", digest, data)
+
+	location, _ := startSession(t, r, "postgres")
+	w = uploadRequest(t, r, http.MethodPut, location+"?digest="+digest, data)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+}
+
 func TestPostThenPutCompletes(t *testing.T) {
 	r, store := setupUploadServer(t)
 	data := randomBytes(t, 50*1024)
