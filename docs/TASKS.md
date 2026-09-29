@@ -347,13 +347,40 @@ README「目标与需求」。
   测试全部用 `t.TempDir()`/`t.Setenv`,不依赖具体目录。`.env.example`
   已同步新增 Registry 小节。
 
-### T20 OCI Distribution Spec conformance 测试
+### T20 OCI Distribution Spec conformance 测试 [done]
 
 - 目标:用官方套件验证兼容性。
-- 要点:clone `opencontainers/distribution-spec`,用其 conformance 测试,
-  环境变量指向本地实例,覆盖 pull / push / content discovery / referrers
-  各组。
-- 验收:全部通过;把失败项修完或明确记录已知差异。
+- 做法:clone `opencontainers/distribution-spec` 到 `deps/`(checkout v1.1.1,
+  已加入 .gitignore),`conformance/` 下 `go test -c` 编译,环境变量指向本地
+  实例,四组全跑(Pull / Push / Content Discovery / Content Management)。
+- 验收记录(2026-09-29,v1.1.1 套件,74 specs):**74 Passed / 0 Failed /
+  5 Skipped(skipped 均为套件按环境条件的自带条件跳过)**。复跑命令:
+  `LISTEN=127.0.0.1:1930 DATA_DIR=… DSN=… go run .`,再于
+  `deps/distribution-spec/conformance` 执行
+  `OCI_ROOT_URL=http://127.0.0.1:1930 OCI_NAMESPACE=conformance/test
+  OCI_CROSSMOUNT_NAMESPACE=conformance/other OCI_TEST_PULL=1 OCI_TEST_PUSH=1
+  OCI_TEST_CONTENT_DISCOVERY=1 OCI_TEST_CONTENT_MANAGEMENT=1 ./conformance.test`。
+- 首轮 66/8,修完的 8 项失败(全部落地为真实功能/修复,非跳过):
+  1. **blob DELETE**(04 组必需,顺带补齐 roadmap 管理操作):
+     `DELETE /v2/<name>/blobs/<digest>` → 202;解本仓库关联,无其他仓库
+     引用时删文件+行;未被本仓库链接 → 404 `BLOB_UNKNOWN`。
+  2. **存储 content 重解析的 mediaType 回退**:Delete/GC/Referrers 重解析
+     存量 content 原来传空 contentType,文档本身无 mediaType 字段时
+     (套件 emptyLayerManifest 即如此,类型全靠 PUT Content-Type)必现
+     "missing media type" 500;统一改传行内 `m.MediaType`。
+  3. **`OCI-Subject` 响应头**(OCI 1.1):PUT 带 subject 的 manifest 时
+     回显 subject digest;`manifests.Store` 签名改为返回 `(digest, *Meta,
+     error)`。
+  4. **GET upload session**:断点续传查进度,204 + Range + Location +
+     Docker-Upload-UUID(原仅 PUT/PATCH/DELETE)。
+  5. **tags/list 分页**:`n` 上限(非法/<1 → 400)、`last` 开区间续读,
+     字典序(last 先切,n 再截)。
+  6. **referrers artifactType 回退**:manifest 无 artifactType 字段时按
+     OCI 1.1 用 config descriptor 的 mediaType 参与过滤与输出;过滤生效
+     时响应带 `OCI-Filters-Applied: artifactType`。
+- 回归:上述各项均有单测(blob 删除/共享、无 mediaType 文档删除、
+  OCI-Subject、upload status、tags 分页、artifactType 回退);
+  `go vet ./... && go test ./...` 全绿。
 
 ### T21 文档与清理
 

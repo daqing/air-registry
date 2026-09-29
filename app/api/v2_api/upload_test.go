@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -397,5 +398,35 @@ func assertBlobRegistered(t *testing.T, store *blobstore.Store, repoName, digest
 	entries, _ := os.ReadDir(uploadsDir)
 	for _, e := range entries {
 		t.Fatalf("leftover upload temp file: %s", e.Name())
+	}
+}
+
+func TestGetUploadStatus(t *testing.T) {
+	r, _ := setupUploadServer(t)
+	location, uuid := startSession(t, r, "status/app")
+
+	chunk := randomBytes(t, 42)
+	w := uploadRequest(t, r, http.MethodPatch, location, chunk)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	w = uploadRequest(t, r, http.MethodGet, location, nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("Range"); got != "0-41" {
+		t.Fatalf("expected Range 0-41, got %q", got)
+	}
+	if got := w.Header().Get("Location"); got != location {
+		t.Fatalf("expected Location %q, got %q", location, got)
+	}
+	if got := w.Header().Get("Docker-Upload-UUID"); got != uuid {
+		t.Fatalf("expected Docker-Upload-UUID %q, got %q", uuid, got)
+	}
+
+	w = uploadRequest(t, r, http.MethodGet, "/v2/status/app/blobs/uploads/"+strings.Repeat("0", 32), nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for an unknown session, got %d", w.Code)
 	}
 }

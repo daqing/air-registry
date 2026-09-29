@@ -48,6 +48,8 @@ func (h *Handler) Dispatch(c *gin.Context) {
 			h.appendUpload(c, name, uuid)
 		case http.MethodDelete:
 			h.abortUpload(c, name, uuid)
+		case http.MethodGet:
+			h.getUploadStatus(c, name, uuid)
 		default:
 			ociError(c, http.StatusNotFound, "UNSUPPORTED", "unsupported API endpoint")
 		}
@@ -111,9 +113,12 @@ func (h *Handler) Dispatch(c *gin.Context) {
 			ociError(c, http.StatusBadRequest, "NAME_INVALID", "invalid repository name")
 			return
 		}
-		if c.Request.Method == http.MethodHead {
+		switch c.Request.Method {
+		case http.MethodHead:
 			h.checkBlob(c, name, digest)
-		} else {
+		case http.MethodDelete:
+			h.deleteBlob(c, name, digest)
+		default:
 			h.serveBlob(c, name, digest)
 		}
 		return

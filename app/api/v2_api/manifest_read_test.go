@@ -168,3 +168,56 @@ func TestListTagsUnknownRepoReturns404(t *testing.T) {
 		t.Fatalf("expected NAME_UNKNOWN, got %q", w.Body.String())
 	}
 }
+
+func TestListTagsPagination(t *testing.T) {
+	r, store := setupManifestServer(t)
+	config := seedBlob(t, store, []byte("config"))
+	body := imageManifestBody(t, config, seedBlob(t, store, []byte("l1")))
+	for _, tag := range []string{"t1", "t2", "t3"} {
+		putManifest(t, r, "/v2/pages/app/manifests/"+tag, "application/vnd.oci.image.manifest.v1+json", body)
+	}
+
+	get := func(url string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, url, nil))
+		return w
+	}
+	tagsOf := func(w *httptest.ResponseRecorder) []string {
+		t.Helper()
+		var list struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+			t.Fatalf("unmarshal tag list: %v (%s)", err, w.Body.String())
+		}
+		return list.Tags
+	}
+
+	w := get("/v2/pages/app/tags/list?n=2")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := tagsOf(w); len(got) != 2 || got[0] != "t1" || got[1] != "t2" {
+		t.Fatalf("expected [t1 t2], got %v", got)
+	}
+
+	w = get("/v2/pages/app/tags/list?n=2&last=t2")
+	if got := tagsOf(w); len(got) != 1 || got[0] != "t3" {
+		t.Fatalf("expected [t3] after last=t2, got %v", got)
+	}
+
+	w = get("/v2/pages/app/tags/list?last=t9")
+	if got := tagsOf(w); len(got) != 0 {
+		t.Fatalf("expected an empty page past the last tag, got %v", got)
+	}
+
+	w = get("/v2/pages/app/tags/list?n=abc")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a non-numeric n, got %d", w.Code)
+	}
+	w = get("/v2/pages/app/tags/list?n=0")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for n=0, got %d", w.Code)
+	}
+}

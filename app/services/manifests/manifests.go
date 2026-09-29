@@ -245,16 +245,25 @@ func Referrers(repoName, digest, artifactType string) ([]Referrer, error) {
 
 	referrers := make([]Referrer, 0, len(rows))
 	for _, m := range rows {
-		if artifactType != "" && (m.ArtifactType == nil || *m.ArtifactType != artifactType) {
+		var doc manifestDoc
+		effectiveType := m.ArtifactType
+		if effectiveType == nil && json.Unmarshal([]byte(m.Content), &doc) == nil &&
+			doc.Config != nil && doc.Config.MediaType != "" {
+			// OCI 1.1: a manifest without an artifactType field falls back
+			// to its config descriptor's mediaType.
+			v := doc.Config.MediaType
+			effectiveType = &v
+		}
+		if artifactType != "" && (effectiveType == nil || *effectiveType != artifactType) {
 			continue
 		}
 		ref := Referrer{
 			MediaType:    m.MediaType,
 			Digest:       m.Digest,
 			Size:         m.Size,
-			ArtifactType: m.ArtifactType,
+			ArtifactType: effectiveType,
 		}
-		if meta, err := Parse([]byte(m.Content), ""); err == nil {
+		if meta, err := Parse([]byte(m.Content), m.MediaType); err == nil {
 			ref.Annotations = meta.Annotations
 		}
 		referrers = append(referrers, ref)
@@ -392,7 +401,7 @@ func Delete(repoName, reference string) error {
 		return ErrManifestUnknown
 	}
 
-	meta, err := Parse([]byte(m.Content), "")
+	meta, err := Parse([]byte(m.Content), m.MediaType)
 	if err != nil {
 		return err
 	}
@@ -408,7 +417,7 @@ func Delete(repoName, reference string) error {
 		if o.ID == m.ID {
 			continue
 		}
-		om, err := Parse([]byte(o.Content), "")
+		om, err := Parse([]byte(o.Content), o.MediaType)
 		if err != nil {
 			continue // leave links; GC reconciles
 		}
@@ -442,24 +451,25 @@ func Delete(repoName, reference string) error {
 // Store persists content and its metadata, upserts the repository, links
 // the referenced blobs to it, and points the tag at the manifest digest
 // when reference is a tag. A digest reference stores the manifest without
-// creating a tag. Returns the manifest digest.
-func Store(repoName, reference string, content []byte, contentType string) (string, error) {
+// creating a tag. Returns the manifest digest and its parsed metadata (the
+// subject feeds the OCI-Subject response header).
+func Store(repoName, reference string, content []byte, contentType string) (string, *Meta, error) {
 	meta, err := Parse(content, contentType)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	digest := Digest(content)
 
 	isDigestRef := strings.Contains(reference, ":")
 	if isDigestRef {
 		if err := blobstore.ValidateDigest(reference); err != nil {
-			return "", fmt.Errorf("%w: bad digest reference: %v", ErrInvalidManifest, err)
+			return "", nil, fmt.Errorf("%w: bad digest reference: %v", ErrInvalidManifest, err)
 		}
 		if reference != digest {
-			return "", fmt.Errorf("%w: digest reference does not match content", ErrInvalidManifest)
+			return "", nil, fmt.Errorf("%w: digest reference does not match content", ErrInvalidManifest)
 		}
 	} else if !tagPattern.MatchString(reference) {
-		return "", fmt.Errorf("%w %q", ErrInvalidTag, reference)
+		return "", nil, fmt.Errorf("%w %q", ErrInvalidTag, reference)
 	}
 
 	// Referenced content must already be uploaded, like docker
@@ -468,20 +478,20 @@ func Store(repoName, reference string, content []byte, contentType string) (stri
 		for _, child := range meta.ChildDigests {
 			found, err := repo.ExistsWhere[models.Manifest](airwaysql.H{"digest": child})
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			if !found {
-				return "", fmt.Errorf("%w: %s", ErrMissingBlob, child)
+				return "", nil, fmt.Errorf("%w: %s", ErrMissingBlob, child)
 			}
 		}
 	} else {
 		for _, d := range meta.BlobDigests {
 			found, err := repo.ExistsWhere[models.Blob](airwaysql.H{"digest": d})
 			if err != nil {
-				return "", err
+				return "", nil, err
 			}
 			if !found {
-				return "", fmt.Errorf("%w: %s", ErrMissingBlob, d)
+				return "", nil, fmt.Errorf("%w: %s", ErrMissingBlob, d)
 			}
 		}
 	}
@@ -490,7 +500,7 @@ func Store(repoName, reference string, content []byte, contentType string) (stri
 
 	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if r == nil {
 		r, err = repo.CreateFrom[models.Repository](airwaysql.H{
@@ -499,13 +509,13 @@ func Store(repoName, reference string, content []byte, contentType string) (stri
 			"updated_at": now,
 		})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 
 	m, err := repo.FindOneBy[models.Manifest](airwaysql.H{"repo_id": r.ID, "digest": digest})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if m == nil {
 		_, err = repo.CreateFrom[models.Manifest](airwaysql.H{
@@ -520,21 +530,21 @@ func Store(repoName, reference string, content []byte, contentType string) (stri
 			"updated_at":     now,
 		})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 
 	for _, d := range meta.BlobDigests {
 		blob, err := repo.FindOneBy[models.Blob](airwaysql.H{"digest": d})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if blob == nil {
 			continue // raced with a delete; GC will reconcile
 		}
 		linked, err := repo.ExistsWhere[models.RepoBlob](airwaysql.H{"repo_id": r.ID, "blob_id": blob.ID})
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if linked {
 			continue
@@ -545,17 +555,17 @@ func Store(repoName, reference string, content []byte, contentType string) (stri
 			"created_at": now,
 			"updated_at": now,
 		}); err != nil {
-			return "", err
+			return "", nil, err
 		}
 	}
 
 	if isDigestRef {
-		return digest, nil
+		return digest, meta, nil
 	}
 
 	tag, err := repo.FindOneBy[models.Tag](airwaysql.H{"repo_id": r.ID, "name": reference})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if tag == nil {
 		_, err = repo.CreateFrom[models.Tag](airwaysql.H{
@@ -565,13 +575,18 @@ func Store(repoName, reference string, content []byte, contentType string) (stri
 			"created_at":      now,
 			"updated_at":      now,
 		})
-		return digest, err
+		if err != nil {
+			return "", nil, err
+		}
+		return digest, meta, nil
 	}
 	if tag.ManifestDigest != digest {
-		return digest, repo.UpdateByID[models.Tag](tag.ID, airwaysql.H{
+		if err := repo.UpdateByID[models.Tag](tag.ID, airwaysql.H{
 			"manifest_digest": digest,
 			"updated_at":      now,
-		})
+		}); err != nil {
+			return "", nil, err
+		}
 	}
-	return digest, nil
+	return digest, meta, nil
 }

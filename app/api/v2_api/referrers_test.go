@@ -241,3 +241,39 @@ func TestReferrersRejectsNonGet(t *testing.T) {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
+
+// A referrer without an artifactType field advertises (and filters by) its
+// config descriptor's mediaType, per OCI 1.1.
+func TestReferrersArtifactTypeFallsBackToConfigMediaType(t *testing.T) {
+	r, store := setupManifestServer(t)
+	subject := pushSubjectAndReferrers(t, r, store, "fallback/repo") // no referrers yet
+
+	const configMediaType = "application/vnd.example.sbom.config"
+	cfgBody := []byte(`{"sbom":"true"}`)
+	cfgDigest := seedBlob(t, store, cfgBody)
+	referrer := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json",` +
+		`"config":{"mediaType":"` + configMediaType + `","digest":"` + cfgDigest + `","size":` + itoa(len(cfgBody)) + `},` +
+		`"subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"` + subject + `"}}`)
+	w := putManifest(t, r, "/v2/fallback/repo/manifests/sbom", manifests.MediaTypeOCIManifest, referrer)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("push referrer: expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	w = getReferrers(t, r, "/v2/fallback/repo/referrers/"+subject)
+	if got := decodeReferrers(t, w); len(got.Manifests) != 1 || got.Manifests[0].ArtifactType != configMediaType {
+		t.Fatalf("expected the config mediaType as artifactType, got %+v", got.Manifests)
+	}
+
+	w = getReferrers(t, r, "/v2/fallback/repo/referrers/"+subject+"?artifactType="+configMediaType)
+	if got := decodeReferrers(t, w); len(got.Manifests) != 1 {
+		t.Fatalf("expected the filter to match the config mediaType, got %+v", got.Manifests)
+	}
+	if got := w.Header().Get("OCI-Filters-Applied"); got != "artifactType" {
+		t.Fatalf("expected OCI-Filters-Applied header, got %q", got)
+	}
+
+	w = getReferrers(t, r, "/v2/fallback/repo/referrers/"+subject+"?artifactType=application/other")
+	if got := decodeReferrers(t, w); len(got.Manifests) != 0 {
+		t.Fatalf("expected no matches for a different artifactType, got %+v", got.Manifests)
+	}
+}

@@ -317,3 +317,50 @@ func TestPutManifestRejectsBadInput(t *testing.T) {
 		})
 	}
 }
+
+func TestPutManifestWithSubjectSetsOCISubjectHeader(t *testing.T) {
+	r, store := setupManifestServer(t)
+	config := seedBlob(t, store, []byte("config"))
+	subject := digestOf([]byte("subject"))
+
+	body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json",` +
+		`"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + config + `","size":1},` +
+		`"layers":[],"subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":"` + subject + `"}}`)
+
+	w := putManifest(t, r, "/v2/referrers/app/manifests/attached", "application/vnd.oci.image.manifest.v1+json", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("OCI-Subject"); got != subject {
+		t.Fatalf("expected OCI-Subject %q, got %q", subject, got)
+	}
+
+	// A manifest without a subject omits the header.
+	plain := imageManifestBody(t, config, seedBlob(t, store, []byte("l1")))
+	w = putManifest(t, r, "/v2/referrers/app/manifests/plain", "application/vnd.oci.image.manifest.v1+json", plain)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	if got := w.Header().Get("OCI-Subject"); got != "" {
+		t.Fatalf("expected no OCI-Subject header, got %q", got)
+	}
+}
+
+func TestDeleteManifestWithoutMediaTypeField(t *testing.T) {
+	r, store := setupManifestServer(t)
+	config := seedBlob(t, store, []byte("config"))
+
+	// The document omits the top-level mediaType; the Content-Type header
+	// carries it, and the stored row must round-trip for a later delete.
+	body := []byte(`{"schemaVersion":2,"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":"` + config + `","size":1},"layers":[]}`)
+	w := putManifest(t, r, "/v2/mediatypeless/app/manifests/v1", "application/vnd.oci.image.manifest.v1+json", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", w.Code, w.Body.String())
+	}
+	digest := w.Header().Get("Docker-Content-Digest")
+
+	w = uploadRequest(t, r, http.MethodDelete, "/v2/mediatypeless/app/manifests/"+digest, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", w.Code, w.Body.String())
+	}
+}

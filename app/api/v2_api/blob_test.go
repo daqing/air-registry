@@ -247,3 +247,66 @@ func TestCheckBlobUnlinkedRepoReturns404(t *testing.T) {
 		t.Fatalf("expected status 404, got %d", w.Code)
 	}
 }
+
+func TestDeleteBlob(t *testing.T) {
+	data := randomBytes(t, 100)
+	r, digest := setupBlobServer(t, "delete/app", data)
+
+	w := uploadRequest(t, r, http.MethodDelete, "/v2/delete/app/blobs/"+digest, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	// Gone: GET and HEAD both 404, and a second delete 404s too.
+	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodDelete} {
+		w = uploadRequest(t, r, method, "/v2/delete/app/blobs/"+digest, nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected status 404 after delete, got %d for %s", w.Code, method)
+		}
+	}
+
+	// Another repository's blob is untouched.
+	w = uploadRequest(t, r, http.MethodDelete, "/v2/delete/other/blobs/"+digest, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for an unlinked repository, got %d", w.Code)
+	}
+}
+
+func TestDeleteBlobSharedAcrossRepos(t *testing.T) {
+	data := randomBytes(t, 100)
+	r, digest := setupBlobServer(t, "share/base", data)
+
+	// Mount into a second repository, then delete from the first: the
+	// second keeps the blob (file + row survive while any repo links it).
+	if mounted, err := blobs.Mount("share/app", "share/base", digest); err != nil || !mounted {
+		t.Fatalf("mount blob: %v (mounted=%v)", err, mounted)
+	}
+	w := uploadRequest(t, r, http.MethodDelete, "/v2/share/base/blobs/"+digest, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	w = uploadRequest(t, r, http.MethodHead, "/v2/share/app/blobs/"+digest, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for the mounting repository, got %d", w.Code)
+	}
+
+	// Deleting from the last linking repository reclaims the file.
+	w = uploadRequest(t, r, http.MethodDelete, "/v2/share/app/blobs/"+digest, nil)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected status 202, got %d (%s)", w.Code, w.Body.String())
+	}
+	w = uploadRequest(t, r, http.MethodHead, "/v2/share/app/blobs/"+digest, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 after the last delete, got %d", w.Code)
+	}
+}
+
+func TestDeleteBlobInvalidDigest(t *testing.T) {
+	r, _ := setupBlobServer(t, "delete/app", randomBytes(t, 10))
+
+	w := uploadRequest(t, r, http.MethodDelete, "/v2/delete/app/blobs/not-a-digest", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d (%s)", w.Code, w.Body.String())
+	}
+}

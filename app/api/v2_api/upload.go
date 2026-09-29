@@ -180,6 +180,21 @@ func (h *Handler) abortUpload(c *gin.Context, name, uuid string) {
 	c.Status(http.StatusNoContent)
 }
 
+// getUploadStatus answers GET /v2/<name>/blobs/uploads/<uuid> with the
+// session's progress, so an interrupted chunked upload can be resumed.
+func (h *Handler) getUploadStatus(c *gin.Context, name, uuid string) {
+	sess, ok := h.Uploads.Get(uuid)
+	if !ok || sess.Repo != name {
+		ociError(c, http.StatusNotFound, "BLOB_UPLOAD_UNKNOWN", "upload session unknown")
+		return
+	}
+
+	c.Header("Location", uploadLocation(name, uuid))
+	c.Header("Range", "0-"+strconv.FormatInt(maxInt64(sess.Offset-1, 0), 10))
+	c.Header("Docker-Upload-UUID", uuid)
+	c.Status(http.StatusNoContent)
+}
+
 func uploadLocation(name, uuid string) string {
 	return "/v2/" + name + "/blobs/uploads/" + uuid
 }

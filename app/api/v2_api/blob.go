@@ -47,6 +47,24 @@ func (h *Handler) checkBlob(c *gin.Context, name, digest string) {
 	c.Status(http.StatusOK)
 }
 
+// deleteBlob answers DELETE /v2/<name>/blobs/<digest>.
+func (h *Handler) deleteBlob(c *gin.Context, name, digest string) {
+	if !h.validBlobDigest(c, digest) {
+		return
+	}
+
+	if err := blobs.Delete(h.Blobs, name, digest); err != nil {
+		if errors.Is(err, blobs.ErrBlobUnknown) {
+			ociError(c, http.StatusNotFound, "BLOB_UNKNOWN", "blob unknown to this repository")
+			return
+		}
+		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
+		return
+	}
+
+	c.Status(http.StatusAccepted)
+}
+
 // blobAvailable validates digest, then requires the blob to be stored on
 // disk AND linked to name; it answers the request with the proper OCI error
 // (400 / 404 / 500) and reports false otherwise.

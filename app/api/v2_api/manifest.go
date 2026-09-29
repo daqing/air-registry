@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -24,7 +25,7 @@ func (h *Handler) putManifest(c *gin.Context, name, reference string) {
 		return
 	}
 
-	digest, err := manifests.Store(name, reference, body, c.GetHeader("Content-Type"))
+	digest, meta, err := manifests.Store(name, reference, body, c.GetHeader("Content-Type"))
 	if err != nil {
 		switch {
 		case errors.Is(err, manifests.ErrInvalidManifest):
@@ -41,6 +42,10 @@ func (h *Handler) putManifest(c *gin.Context, name, reference string) {
 
 	c.Header("Docker-Content-Digest", digest)
 	c.Header("Location", "/v2/"+name+"/manifests/"+digest)
+	if meta.SubjectDigest != nil {
+		// OCI 1.1: echo the subject of a referrer manifest.
+		c.Header("OCI-Subject", *meta.SubjectDigest)
+	}
 	c.Status(http.StatusCreated)
 }
 
@@ -89,8 +94,9 @@ func (h *Handler) deleteManifest(c *gin.Context, name, reference string) {
 	c.Status(http.StatusAccepted)
 }
 
-// listTags answers GET /v2/<name>/tags/list. The n/last pagination
-// parameters are accepted but not enforced yet.
+// listTags answers GET /v2/<name>/tags/list. Tags come in lexicographic
+// order; n caps how many are returned and last resumes after the given tag
+// (exclusive), per the distribution spec.
 func (h *Handler) listTags(c *gin.Context, name string) {
 	tags, err := manifests.ListTags(name)
 	if err != nil {
@@ -100,6 +106,24 @@ func (h *Handler) listTags(c *gin.Context, name string) {
 	if tags == nil {
 		ociError(c, http.StatusNotFound, "NAME_UNKNOWN", "repository name not known to registry")
 		return
+	}
+
+	if last := c.Query("last"); last != "" {
+		i := sort.SearchStrings(tags, last)
+		if i < len(tags) && tags[i] == last {
+			i++
+		}
+		tags = tags[i:]
+	}
+	if n := c.Query("n"); n != "" {
+		count, err := strconv.Atoi(n)
+		if err != nil || count < 1 {
+			ociError(c, http.StatusBadRequest, "PARSE_ERROR", "invalid n query parameter")
+			return
+		}
+		if len(tags) > count {
+			tags = tags[:count]
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"name": name, "tags": tags})

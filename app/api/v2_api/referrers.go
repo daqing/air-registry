@@ -22,6 +22,9 @@ func (h *Handler) listReferrers(c *gin.Context, name, digest string) {
 		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
 		return
 	}
+	if filter := c.Query("artifactType"); filter != "" {
+		c.Header("OCI-Filters-Applied", "artifactType")
+	}
 
 	descriptors := make([]gin.H, 0, len(refs))
 	for _, ref := range refs {

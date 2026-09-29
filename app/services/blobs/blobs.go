@@ -3,13 +3,19 @@
 package blobs
 
 import (
+	"errors"
 	"time"
 
 	"github.com/daqing/airway/lib/repo"
 	airwaysql "github.com/daqing/airway/lib/sql"
 
 	"github.com/daqing/air-registry/app/models"
+	"github.com/daqing/air-registry/app/services/blobstore"
 )
+
+// ErrBlobUnknown marks a blob that does not exist or is not linked to the
+// repository in question.
+var ErrBlobUnknown = errors.New("blob unknown")
 
 // EnsureRepository finds or creates the repository row for name. Two
 // uploads starting concurrently on a fresh repository race to create the
@@ -95,6 +101,54 @@ func Linked(repoName, digest string) (bool, error) {
 	}
 
 	return repo.ExistsWhere[models.RepoBlob](airwaysql.H{"repo_id": r.ID, "blob_id": blob.ID})
+}
+
+// Delete unlinks digest from repoName and, once no other repository links
+// it, removes the blob file and its blobs table row. Manifests that still
+// reference the digest are left dangling; garbage collection (T13)
+// reconciles them. Deleting a blob that is not linked to repoName yields
+// ErrBlobUnknown.
+func Delete(store *blobstore.Store, repoName, digest string) error {
+	r, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		return ErrBlobUnknown
+	}
+
+	blob, err := repo.FindOneBy[models.Blob](airwaysql.H{"digest": digest})
+	if err != nil {
+		return err
+	}
+	if blob == nil {
+		return ErrBlobUnknown
+	}
+
+	linked, err := repo.ExistsWhere[models.RepoBlob](airwaysql.H{"repo_id": r.ID, "blob_id": blob.ID})
+	if err != nil {
+		return err
+	}
+	if !linked {
+		return ErrBlobUnknown
+	}
+
+	if err := repo.DeleteWhere[models.RepoBlob](airwaysql.H{"repo_id": r.ID, "blob_id": blob.ID}); err != nil {
+		return err
+	}
+
+	stillLinked, err := repo.ExistsWhere[models.RepoBlob](airwaysql.H{"blob_id": blob.ID})
+	if err != nil {
+		return err
+	}
+	if stillLinked {
+		return nil // another repository shares the file
+	}
+
+	if err := store.Delete(digest); err != nil {
+		return err
+	}
+	return repo.DeleteByID[models.Blob](blob.ID)
 }
 
 // ensureBlob finds or creates the blobs row for digest, tolerating a create

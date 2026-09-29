@@ -30,7 +30,9 @@ func Run(store *blobstore.Store) (*Stats, error) {
 	}
 	for _, m := range rows {
 		keep[m.Digest] = true
-		meta, err := manifests.Parse([]byte(m.Content), "")
+		// Stored docs may omit the mediaType field (the row carries the
+		// type negotiated at PUT time), so pass it as the fallback.
+		meta, err := manifests.Parse([]byte(m.Content), m.MediaType)
 		if err != nil {
 			continue // unparseable: keep the manifest row itself
 		}
