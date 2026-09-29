@@ -79,6 +79,47 @@ oras attach localhost:1905/demo/app:v1 sbom.json:application/json \
 oras discover localhost:1905/demo/app:v1
 ```
 
+### Local HTTPS with Caddy
+
+The repo ships a `Caddyfile` that terminates TLS at
+`https://air-registry.localhost:8443` and proxies to the app's `LISTEN`
+address (from `.env`, default `127.0.0.1:1905`).
+Caddy's internal CA issues and renews the certificate automatically — no
+real domain or ACME setup needed:
+
+```bash
+brew install caddy   # once
+caddy trust          # once: add Caddy's local root CA to the system trust store
+just caddy           # run alongside the app
+```
+
+Browsers, `crane` and `oras` then work against `air-registry.localhost:8443`
+with no insecure-registry config. Docker Desktop's daemon runs in a VM with
+its own trust store, so for `docker` run:
+
+```bash
+just copy-docker-cert
+```
+
+It copies Caddy's root cert into `~/.docker/certs.d` and restarts Docker
+Desktop; afterwards `docker push air-registry.localhost:8443/demo/app:v1`
+works over HTTPS with no `insecure-registries` entry.
+
+For [Lima](https://lima-vm.io/) (`nerdctl.lima`), the VM needs the same trust
+setup plus a proxy bypass: Lima propagates the host's HTTP(S) proxy settings
+into the VM without a `NO_PROXY` entry for `*.localhost`, so registry requests
+die in the proxy with `EOF`. Run:
+
+```bash
+just setup-lima-client
+```
+
+It maps `air-registry.localhost` onto the host (`host.lima.internal`), trusts
+Caddy's root CA, and adds the `NO_PROXY` entries where both the nerdctl CLI
+and the rootless containerd daemon will see them, then restarts the instance.
+Afterwards `nerdctl push air-registry.localhost:8443/demo/app:v1` works from
+inside the VM. Re-run it after `limactl delete` + recreate.
+
 ### Web UI
 
 Open `http://localhost:1905/` — a home page with a search box and the most

@@ -414,6 +414,25 @@ README「目标与需求」。
 - 验收:`go test ./...` 全绿;`nerdctl push
   air-registry.localhost:8443/postgres:latest` 端到端通过。
 
+### T23 本地 HTTPS 客户端工具链(Caddy + lima) [done]
+
+- 目标:HTTPS 入口的上游端口跟随 `.env` 的 `LISTEN`;为 lima
+  (nerdctl.lima)提供一键客户端配置。
+- 实现:
+  - `Caddyfile` 入库,上游改为 `{$AIR_REGISTRY_UPSTREAM:127.0.0.1:1905}`,
+    由 `just caddy` 启动时从 `.env` 的 `LISTEN` 注入,不再硬编码 1905。
+  - 新增 `scripts/setup-lima-client.sh`(just 入口 `setup-lima-client`,
+    幂等):lima VM 内写 `/etc/hosts` 把 `air-registry.localhost` 指向
+    宿主机(`host.lima.internal`)、信任 Caddy 根 CA、在 `lima.yaml env`
+    与 `/etc/environment` 两处加 `NO_PROXY`(分别覆盖 nerdctl CLI 与
+    rootless containerd daemon,后者发 pull 请求),按提示重启实例;
+    `limactl delete` 重建后重跑即可。
+  - `scripts/copy-docker-cert.sh` 一并入库(just/README 此前已引用)。
+  - 两份 README 同步:Caddy 一节改为反代 `LISTEN`;新增 lima 小节说明
+    EOF 成因与用法;`.env.example` 的 LISTEN 注释注明 Caddy 跟随。
+- 验收:`just caddy` 启动后 push/pull 冒烟通过;脚本重复运行输出
+  already configured;`go test ./...` 全绿。
+
 ## 后续扩展(暂不做,仅记录)
 
 - HTTP basic auth(推拉分权)、htpasswd 风格用户管理

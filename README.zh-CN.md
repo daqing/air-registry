@@ -74,6 +74,45 @@ oras attach localhost:1905/demo/app:v1 sbom.json:application/json \
 oras discover localhost:1905/demo/app:v1
 ```
 
+### 用 Caddy 启用本地 HTTPS
+
+仓库自带 `Caddyfile`,在 `https://air-registry.localhost:8443` 终结 TLS
+并反代到应用的 `LISTEN` 地址(取自 `.env`,默认 `127.0.0.1:1905`)。Caddy 的内部 CA 会自动签发和续期证书,无需
+真实域名或 ACME 配置:
+
+```bash
+brew install caddy   # 一次
+caddy trust          # 一次:把 Caddy 本地根 CA 加入系统信任链
+just caddy           # 与应用同时运行
+```
+
+浏览器、`crane`、`oras` 之后可直接访问 `air-registry.localhost:8443`,
+无需 insecure-registry 配置。Docker Desktop 的 daemon 运行在独立 VM 中,
+使用自己的信任链,因此 `docker` 需要执行:
+
+```bash
+just copy-docker-cert
+```
+
+它会把 Caddy 根证书复制到 `~/.docker/certs.d` 并重启 Docker
+Desktop;之后 `docker push air-registry.localhost:8443/demo/app:v1` 即可
+走 HTTPS,无需 `insecure-registries` 配置。
+
+[Lima](https://lima-vm.io/) (`nerdctl.lima`) 除了同样需要信任 CA,还需要
+绕过代理:Lima 会把宿主机的 HTTP(S) 代理设置传播进 VM,但不带
+`*.localhost` 的 `NO_PROXY` 条目,registry 请求会死在代理里(报 `EOF`)。
+执行:
+
+```bash
+just setup-lima-client
+```
+
+它会把 `air-registry.localhost` 指向宿主机(`host.lima.internal`)、信任
+Caddy 根证书,并在 nerdctl CLI 与 rootless containerd daemon 都能读到
+的位置加上 `NO_PROXY`,然后重启实例。之后即可在 VM 里直接
+`nerdctl push air-registry.localhost:8443/demo/app:v1`。`limactl delete`
+重建 VM 后需要重跑一次。
+
 ### 网页端
 
 打开 `http://localhost:1905/` ——首页有搜索框和最近推送的仓库;`/repos`
