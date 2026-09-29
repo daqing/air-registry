@@ -3,11 +3,13 @@ package v2_api
 import (
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/daqing/air-registry/app/services/gc"
 	"github.com/daqing/air-registry/app/services/manifests"
 )
 
@@ -67,7 +69,9 @@ func (h *Handler) getManifest(c *gin.Context, name, reference string) {
 
 // deleteManifest answers DELETE /v2/<name>/manifests/<reference>: the
 // reference (tag or digest) resolves to a digest, and the manifest plus all
-// tags pointing at it are removed from the repository.
+// tags pointing at it are removed from the repository. GC reclaims blobs
+// orphaned by the delete; its failure is logged but does not fail the
+// already-completed delete.
 func (h *Handler) deleteManifest(c *gin.Context, name, reference string) {
 	if err := manifests.Delete(name, reference); err != nil {
 		if errors.Is(err, manifests.ErrManifestUnknown) {
@@ -76,6 +80,10 @@ func (h *Handler) deleteManifest(c *gin.Context, name, reference string) {
 		}
 		ociError(c, http.StatusInternalServerError, "UNKNOWN", err.Error())
 		return
+	}
+
+	if _, err := gc.Run(h.Blobs); err != nil {
+		log.Printf("gc after DELETE %s/%s: %v", name, reference, err)
 	}
 
 	c.Status(http.StatusAccepted)

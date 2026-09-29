@@ -188,8 +188,9 @@ README「目标与需求」。
   digest)。
 - 实现:`manifests.Delete` — 复用 `Find` 解析引用;删除该 digest 的全部
   tags 行与 manifests 行;对本仓库 repo_blobs 只解除"仅被此 manifest 引用"
-  的 blob 关联(同仓库其他 manifest 仍引用的保持关联,文件留给 T13 GC
-  回收);响应 202,未命中 404 `MANIFEST_UNKNOWN`。
+  的 blob 关联(同仓库其他 manifest 仍引用的保持关联);随后 T13 的 GC
+  自动回收孤儿 blob 的文件与表行;响应 202,未命中 404
+  `MANIFEST_UNKNOWN`。
 - **已知限制(有意不做)**:删除 subject 后,其 referrers 的
   `subject_digest` 成为孤儿,不做级联删除/清空;index 的子 manifest 也
   不级联(可按 digest 单独拉取/删除)。
@@ -202,16 +203,24 @@ README「目标与需求」。
 - 测试覆盖:按 digest/按 tag 删除、多 tag 指向同 digest、同仓库共享层保留、
   跨仓库 mount 关联保留、blob 文件删除后仍在磁盘待 GC、未知引用 404。
 
-### T13 垃圾回收(GC)
+### T13 垃圾回收(GC) [done]
 
 - 目标:清理不再被任何 manifest 引用的 blob。
-- 要点:
-  - 算法:扫描全部 `manifests`,收集所有被引用 digest(config + layers +
-    index 子 manifest + manifest 自身按内容寻址的那个),其余 blob 删文件
-    + 删行。
-  - 挂在 DELETE 后自动执行,另提供 `go run . gc` 手动兜底命令。
-- 验收:推镜像 → 删 manifest → 确认 `data/storage` 对应文件消失;重复执行
-  幂等;测试覆盖。
+- 实现:新服务 `app/services/gc`。`Run(store)` 扫描全部 manifests 收集
+  存活 digest(manifest 自身内容 digest + config/layers + index 子
+  manifest),其余 blob 删文件 + 删 blobs 行 + 删 repo_blobs 关联,返回
+  `{kept, deleted}` 统计。挂载点:DELETE manifest 成功后自动执行(失败仅
+  记日志不影响 202);手动兜底 `./tmp/air-registry-e2e gc`(main.go 在
+  CLI 分发前拦截,用与 server 相同的 `DSN`/`STORAGE_ROOT`)。
+- 语义注意:auto-GC 以"全库 manifests"为存活依据,所以删 index 不级联
+  时子 manifest 仍存活、其 blob 不会被回收(T12 的非级联语义);上传
+  blob 不触发 GC,孤儿由 DELETE 或手动 gc 清。
+- 验收记录(2026-09-29,crane + 手工命令):
+  - 推单架构 busybox(2 blob)→ 删 manifest → 磁盘文件 0。
+  - DELETE 的 auto-GC 顺带清掉同库孤儿 blob。
+  - 上传孤儿 → 手动 `gc` 回收(deleted 1)→ 重复执行幂等(deleted 0)。
+- 测试覆盖:引用中的 blob 全保留、DELETE 后文件+行+关联全清、显式
+  `gc.Run` 幂等。
 
 ## 阶段五:OCI 1.1 Referrers
 

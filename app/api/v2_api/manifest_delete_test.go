@@ -43,6 +43,17 @@ func assertBlobLinkedToRepo(t *testing.T, repoName, digest string, want bool) {
 	}
 }
 
+func assertNoBlobRow(t *testing.T, digest string) {
+	t.Helper()
+	blob, err := repo.FindOneBy[models.Blob](airwaysql.H{"digest": digest})
+	if err != nil {
+		t.Fatalf("check blobs row: %v", err)
+	}
+	if blob != nil {
+		t.Fatalf("expected blobs row for %s deleted", digest)
+	}
+}
+
 func assertTagsEmpty(t *testing.T, r *gin.Engine, repoName string) {
 	t.Helper()
 	w := uploadRequest(t, r, http.MethodGet, "/v2/"+repoName+"/tags/list", nil)
@@ -86,11 +97,13 @@ func TestDeleteManifestByDigest(t *testing.T) {
 	}
 	assertTagsEmpty(t, r, "demo/app")
 
-	// repo_blobs links are removed; blob files stay on disk for GC.
-	assertBlobLinkedToRepo(t, "demo/app", config, false)
-	assertBlobLinkedToRepo(t, "demo/app", layer, false)
-	if ok, err := store.Has(config); err != nil || !ok {
-		t.Fatalf("blob file must remain on disk until GC, has=%v (%v)", ok, err)
+	// DELETE auto-runs GC: links, blobs rows and files all go away.
+	assertNoBlobRow(t, config)
+	assertNoBlobRow(t, layer)
+	for _, d := range []string{config, layer} {
+		if ok, err := store.Has(d); err != nil || ok {
+			t.Fatalf("expected blob file %s reclaimed by GC, has=%v (%v)", d, ok, err)
+		}
 	}
 }
 
@@ -160,8 +173,11 @@ func TestDeleteManifestKeepsBlobsSharedWithSiblingManifest(t *testing.T) {
 	assertBlobLinkedToRepo(t, "demo/app", config, true)
 	assertBlobLinkedToRepo(t, "demo/app", shared, true)
 
-	// The layer only v1 used is unlinked from the repository.
-	assertBlobLinkedToRepo(t, "demo/app", unique, false)
+	// The layer only v1 used is reclaimed by GC (row, link and file).
+	assertNoBlobRow(t, unique)
+	if ok, err := store.Has(unique); err != nil || ok {
+		t.Fatalf("expected blob file %s reclaimed by GC, has=%v (%v)", unique, ok, err)
+	}
 }
 
 func TestDeleteManifestKeepsOtherRepoLinks(t *testing.T) {
@@ -171,6 +187,8 @@ func TestDeleteManifestKeepsOtherRepoLinks(t *testing.T) {
 	digest := pushTestManifest(t, r, "demo/base", "v1", config, layer)
 
 	// Mount both blobs into demo/app, then delete demo/base's manifest.
+	// demo/app references them with no manifest, so GC reclaims the blobs
+	// entirely — links in both repos and the on-disk files disappear.
 	for _, d := range []string{config, layer} {
 		w := uploadRequest(t, r, http.MethodPost, "/v2/demo/app/blobs/uploads/?mount="+d+"&from=demo/base", nil)
 		if w.Code != http.StatusCreated {
@@ -183,11 +201,24 @@ func TestDeleteManifestKeepsOtherRepoLinks(t *testing.T) {
 		t.Fatalf("expected 202, got %d (%s)", w.Code, w.Body.String())
 	}
 
-	// demo/base's links are gone, demo/app's survive.
-	assertBlobLinkedToRepo(t, "demo/base", config, false)
-	assertBlobLinkedToRepo(t, "demo/base", layer, false)
-	assertBlobLinkedToRepo(t, "demo/app", config, true)
-	assertBlobLinkedToRepo(t, "demo/app", layer, true)
+	// Blobs unreferenced by any manifest are reclaimed entirely: rows,
+	// files and every repo_blobs link in both repositories.
+	for _, d := range []string{config, layer} {
+		assertNoBlobRow(t, d)
+		if ok, err := store.Has(d); err != nil || ok {
+			t.Fatalf("expected blob file %s reclaimed by GC, has=%v (%v)", d, ok, err)
+		}
+	}
+	for _, repoName := range []string{"demo/base", "demo/app"} {
+		row, err := repo.FindOneBy[models.Repository](airwaysql.H{"name": repoName})
+		if err != nil || row == nil {
+			t.Fatalf("expected repository %s, got %+v (%v)", repoName, row, err)
+		}
+		n, err := repo.CountWhere[models.RepoBlob](airwaysql.H{"repo_id": row.ID})
+		if err != nil || n != 0 {
+			t.Fatalf("expected no repo_blobs links left in %s, got %d (%v)", repoName, n, err)
+		}
+	}
 }
 
 func TestDeleteManifestUnknown(t *testing.T) {
