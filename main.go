@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"os"
 
@@ -17,6 +18,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 
+	"github.com/daqing/air-registry/app/services/blobstore"
+	"github.com/daqing/air-registry/app/services/gc"
+	"github.com/daqing/air-registry/app/services/registrycfg"
 	"github.com/daqing/air-registry/config"
 )
 
@@ -39,9 +43,37 @@ func main() {
 		return
 	}
 
+	if args[0] == "gc" {
+		runGC()
+		return
+	}
+
 	cmd.Version = versionString()
 	loadCLIEnv()
 	cmd.Run(args)
+}
+
+// runGC is the `gc` command: reclaim blobs that no manifest references.
+// It uses the same DSN/DATA_DIR env vars as the server.
+func runGC() {
+	loadCLIEnv()
+
+	dsn := utils.GetEnvMulti("AIRWAY_DSN", "DSN")
+	if len(dsn) == 0 {
+		log.Println("gc: DSN is not set")
+		os.Exit(1)
+	}
+	if _, err := repo.SetupDB(dsn); err != nil {
+		log.Printf("gc: database setup failed: %v", err)
+		os.Exit(3)
+	}
+
+	stats, err := gc.Run(blobstore.New(registrycfg.DataDir()))
+	if err != nil {
+		log.Printf("gc: %v", err)
+		os.Exit(1)
+	}
+	fmt.Printf("gc: kept %d blobs, deleted %d\n", stats.KeptBlobs, stats.DeletedBlobs)
 }
 
 func runServer() {

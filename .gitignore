@@ -13,3 +13,6 @@
 *.sock
 
 schema.json
+
+# Tool checkouts (e.g. the OCI distribution-spec conformance suite, T20)
+/deps/distribution-spec/

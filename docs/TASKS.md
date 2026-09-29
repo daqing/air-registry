@@ -19,7 +19,7 @@ README「目标与需求」。
 
 ## 阶段一:基础
 
-### T01 数据库 schema 与 migration
+### T01 数据库 schema 与 migration [done]
 
 - 目标:建好核心表,后面所有端点依赖它。
 - 要点:
@@ -32,7 +32,7 @@ README「目标与需求」。
   - 用 `airway generate model ...` 生成,再补 migration。
 - 验收:`airway db:migrate` 成功;model 测试覆盖增删查。
 
-### T02 磁盘 blob 存储服务
+### T02 磁盘 blob 存储服务 [done]
 
 - 目标:封装内容寻址的 blob 文件读写,供端点层复用。
 - 要点:
@@ -43,7 +43,7 @@ README「目标与需求」。
   - 已存在同 digest 时直接成功(幂等)。
 - 验收:单元测试覆盖写入→读取→digest 不符→删除。
 
-### T03 `GET /v2/` 版本探测
+### T03 `GET /v2/` 版本探测 [done]
 
 - 目标:registry 探测端点,所有客户端推拉前的第一步。
 - 要点:`airway generate api v2`,挂 `GET /v2/`,返回 200 和响应头
@@ -52,7 +52,7 @@ README「目标与需求」。
 
 ## 阶段二:拉取端点
 
-### T04 blob 下载端点
+### T04 blob 下载端点 [done]
 
 - 目标:`GET /v2/<name>/blobs/<digest>` 返回 200 + `application/octet-stream`,
   `HEAD` 同路径返回 200/404。
@@ -60,9 +60,12 @@ README「目标与需求」。
   - 从 T02 的 blobstore 取流,响应带 `Docker-Content-Digest` 头;未命中
     返回 404 `BLOB_UNKNOWN`。
   - digest 格式非法 → 400;格式合法但不存在 → 404。
+  - **T09 起按仓库校验**:HEAD/GET 要求 blob 已关联本仓库(repo_blobs),
+    磁盘有但未挂载/上传到本仓库 → 404,否则跨仓库"已存在"会让客户端
+    跳过 mount/upload。
 - 验收:测试塞入 blob 后下载字节一致;404 路径有测试。
 
-### T05 manifest 写入服务 + `PUT /v2/<name>/manifests/<reference>`
+### T05 manifest 写入服务 + `PUT /v2/<name>/manifests/<reference>` [done]
 
 - 目标:能写入 manifest 并把元数据解析入库。
 - 要点:
@@ -76,7 +79,7 @@ README「目标与需求」。
   - 响应 201 + `Docker-Content-Digest` 头;同 digest + tag 重复 PUT 幂等。
 - 验收:测试验证 PUT 后四张表记录正确;curl PUT 一个手写 manifest JSON。
 
-### T06 manifest 读取 + tag 列表
+### T06 manifest 读取 + tag 列表 [done]
 
 - 目标:`GET`/`HEAD /v2/<name>/manifests/<reference>`(tag 或 digest),以及
   `GET /v2/<name>/tags/list`。
@@ -89,7 +92,25 @@ README「目标与需求」。
 
 ## 阶段三:推送端点
 
-### T07 blob 单块上传
+### T07 blob 单块上传 [done]
+
+> 注:已用 lima 虚拟机里的**真实客户端**完成验收(不用 Docker Desktop):
+> `limactl create --name=reg-verify template://docker`,VM 内配
+> `/etc/docker/daemon.json` 的 `insecure-registries: ["192.168.5.2:1930"]`
+> (网关 IP 即宿主机),`docker push` / `docker pull` / `docker run` 全部
+> 通过;另在 a1s 实例用 nerdctl(容器栈)推过 OCI index 多架构镜像,亦成功。
+> 复验步骤:宿主机 `LISTEN=":1930" DSN=... go run .`,VM 里对
+> `192.168.5.2:1930/<name>` 推拉即可。该 VM 已 `limactl stop`,可
+> `limactl delete reg-verify` 删除。T10 的 pull 验收已顺带预验证。
+>
+> **T09 复验时发现的 VM 环境坑**(rootless docker 模板与 T07 当时不同):
+> - 生效的 daemon 配置是 `~/.config/docker/daemon.json`,要在这里加
+>   `insecure-registries`(改 `/etc/docker/daemon.json` 无效);
+> - VM 继承的 `http_proxy=192.168.5.2:9567` 会拦截 dockerd 到宿主机的
+>   请求,需给 user 级 docker.service 加 drop-in:
+>   `~/.config/systemd/user/docker.service.d/no-proxy.conf`,内容为
+>   `[Service]` + `Environment="NO_PROXY=192.168.5.2"`。
+>   这两项 T09 时已配好并留在 VM 磁盘里,`limactl start` 后直接可用。
 
 - 目标:docker push 走的主链路。
 - 要点:
@@ -100,128 +121,317 @@ README「目标与需求」。
   - 上传状态可放内存 map(UUID → 临时文件),重启丢弃即可(客户端会重试)。
 - 验收:`docker push localhost:1900/demo/app:v1` 成功,docker 能完整推完。
 
-### T08 blob 分块上传
+### T08 blob 分块上传 [done]
 
 - 目标:`PATCH`(可多次,`Content-Range` 续传)+ 最后一次 `PUT ?digest=`。
 - 要点:维护已写 offset,每次响应 `Range: 0-<n-1>`;`PUT` 时统一校验 digest;
   非法 offset / digest 不符报错。
 - 验收:`crane push`(走 chunked)成功;测试覆盖多次 PATCH 续传。
 
-### T09 跨仓库 blob mount
+### T09 跨仓库 blob mount [done]
+
+> 注:已用 reg-verify VM(lima)里的真实 docker 复验。同一 busybox 推到
+> `mount-test/base` 再推到 `mount-test/app`,后者输出
+> `55d2dadd4bbc: Mounted from mount-test/base`;服务端日志确认
+> `POST .../mount-test/app/blobs/uploads/?mount=<digest>&from=mount-test/base`
+> 返回 201,而 base 首次推送时 `?from=mount-test/app` 不命中返回 202
+> 并自动降级为普通上传(docker 会按本地 tag 自动尝试兄弟仓库)。磁盘上
+> 两个仓库共享同一份 blob 文件。VM 环境坑见 T07 注。
 
 - 目标:`POST /v2/<name>/blobs/uploads/?mount=<digest>&from=<repo>`。
 - 要点:目标 digest 在 `from` 仓库存在时,直接复制 `repo_blobs` 关联,
   返回 201 + `Docker-Content-Digest`;不存在则降级为普通上传(202)。
+- 实现:`blobs.Mount`(源仓库→blob→repo_blobs 三段校验,幂等链接);
+  `startUpload` 识别 `mount`+`from` 参数;digest 非法仍 400。
+- 顺手修了两个验收中暴露的问题:
+  - **并发上传竞态**:docker 并行推层,新仓库首次并发 `POST ?digest=` 时
+    `EnsureRepository` 撞 `UNIQUE constraint failed: repositories.name` 返回
+    500;`EnsureRepository`/`ensureBlob`/`linkBlobToRepo` 均改为撞约束后
+    重读并接受已有行(有回归测试 `TestConcurrentMonolithicUploadsToNewRepo`)。
+  - **blob HEAD/GET 按仓库校验**(见 T04 注):否则磁盘全局内容寻址会让
+    客户端误以为目标仓库已有 blob,永远走不到 mount。
 - 验收:同一份基础镜像推到两个仓库,docker 日志确认走了 mount;测试覆盖
   命中与降级两条路径。
 
 ## 阶段四:发现、删除与回收
 
-### T10 端到端拉取验证
+### T10 端到端拉取验证 [done]
 
 - 目标:确认 pull 链路在真实客户端下完整可用。
 - 验收:
   - `docker pull localhost:1900/demo/app:v1` 成功,运行 `docker run --rm
     localhost:1900/demo/app:v1` 无异常。
   - `crane manifest` / `crane ls` / `crane blob` 均正常。
+- 验收记录(2026-09-29,reg-verify VM + 宿主机 crane v0.22.1):
+  - VM 内推 `192.168.5.2:1930/demo/app:v1/v2`(busybox,rmi 后重新
+    `docker pull` 再 `docker run --rm ... echo` 正常;T09 起 blob 按仓库
+    校验,本次 pull 顺带再次确认该改动无回归)。
+  - `crane ls` → v1/v2;`crane manifest` → OCI manifest 字节完整;
+    `crane blob` 下载层字节数与 manifest 中 size 一致(1915390)。
+  - 注:crane 用 `go run github.com/google/go-containerregistry/cmd/crane@latest`
+    跑在宿主机,localhost 默认按 HTTP 直连;VM 环境配置见 T07 注。
 
-### T11 `/v2/_catalog`
+### T11 `/v2/_catalog` [done]
 
 - 目标:仓库枚举,支持 `n` / `last` 分页。
-- 验收:`curl 'http://localhost:1900/v2/_catalog?n=2'` 分页正确;测试覆盖。
+- 实现:新服务 `app/services/catalog`,`List(last, n)` 按 name 字典序、
+  `last` 开区间、`n+1` 探一行判断后续页;`v2_api/catalog.go` 返回
+  `{"repositories": [...]}`(空库为 `[]` 非 null),有后续页时带
+  `Link: </v2/_catalog?n=..&last=..>; rel="next"`;`n` 非法(<1 或非数字)
+  400。`_catalog` 为规范保留字,在 Dispatch 最前面单独路由。
+- 验收:`curl 'http://localhost:1900/v2/_catalog?n=2'` 分页正确;测试覆盖
+  (空库、排序、Link 翻页、仅 last、越界、非法 n、非 GET 405→404)。
 
-### T12 删除 manifest
+### T12 删除 manifest [done]
 
 - 目标:`DELETE /v2/<name>/manifests/<digest>`(按 tag 删除时先解析到
   digest)。
-- 要点:删除 `manifests` 行与关联 `tags` 行;`repo_blobs` 里只删本仓库
-  的关联;响应 202。document 一下:删除 subject 后其 referrers 成为孤儿,
-  当前不做级联。
-- 验收:`crane delete localhost:1900/demo/app:v1` 后再 pull 返回 404;
-  测试覆盖。
+- 实现:`manifests.Delete` — 复用 `Find` 解析引用;删除该 digest 的全部
+  tags 行与 manifests 行;对本仓库 repo_blobs 只解除"仅被此 manifest 引用"
+  的 blob 关联(同仓库其他 manifest 仍引用的保持关联);随后 T13 的 GC
+  自动回收孤儿 blob 的文件与表行;响应 202,未命中 404
+  `MANIFEST_UNKNOWN`。
+- **已知限制(有意不做)**:删除 subject 后,其 referrers 的
+  `subject_digest` 成为孤儿,不做级联删除/清空;index 的子 manifest 也
+  不级联(可按 digest 单独拉取/删除)。
+- 验收记录(2026-09-29,宿主机 crane v0.22.1):
+  - `crane copy busybox localhost:1930/demo/app:v1`(完整多架构 OCI
+    index,10 平台 + attestation)→ `crane delete localhost:1930/demo/app:v1`
+    → 再 `crane manifest` 返回 404 `MANIFEST_UNKNOWN`;tags/list 空。
+  - 删除 index 后子 manifest 按 digest 仍可拉(非级联);只被已删 manifest
+    引用的层解除关联(HEAD 404),仍被其他 manifest 引用的层保持 200。
+- 测试覆盖:按 digest/按 tag 删除、多 tag 指向同 digest、同仓库共享层保留、
+  跨仓库 mount 关联保留、blob 文件删除后仍在磁盘待 GC、未知引用 404。
 
-### T13 垃圾回收(GC)
+### T13 垃圾回收(GC) [done]
 
 - 目标:清理不再被任何 manifest 引用的 blob。
-- 要点:
-  - 算法:扫描全部 `manifests`,收集所有被引用 digest(config + layers +
-    index 子 manifest + manifest 自身按内容寻址的那个),其余 blob 删文件
-    + 删行。
-  - 挂在 DELETE 后自动执行,另提供 `go run . gc` 手动兜底命令。
-- 验收:推镜像 → 删 manifest → 确认 `data/storage` 对应文件消失;重复执行
-  幂等;测试覆盖。
+- 实现:新服务 `app/services/gc`。`Run(store)` 扫描全部 manifests 收集
+  存活 digest(manifest 自身内容 digest + config/layers + index 子
+  manifest),其余 blob 删文件 + 删 blobs 行 + 删 repo_blobs 关联,返回
+  `{kept, deleted}` 统计。挂载点:DELETE manifest 成功后自动执行(失败仅
+  记日志不影响 202);手动兜底 `./tmp/air-registry-e2e gc`(main.go 在
+  CLI 分发前拦截,用与 server 相同的 `DSN`/`STORAGE_ROOT`)。
+- 语义注意:auto-GC 以"全库 manifests"为存活依据,所以删 index 不级联
+  时子 manifest 仍存活、其 blob 不会被回收(T12 的非级联语义);上传
+  blob 不触发 GC,孤儿由 DELETE 或手动 gc 清。
+- 验收记录(2026-09-29,crane + 手工命令):
+  - 推单架构 busybox(2 blob)→ 删 manifest → 磁盘文件 0。
+  - DELETE 的 auto-GC 顺带清掉同库孤儿 blob。
+  - 上传孤儿 → 手动 `gc` 回收(deleted 1)→ 重复执行幂等(deleted 0)。
+- 测试覆盖:引用中的 blob 全保留、DELETE 后文件+行+关联全清、显式
+  `gc.Run` 幂等。
 
 ## 阶段五:OCI 1.1 Referrers
 
-### T14 Referrers API
+### T14 Referrers API [done]
 
 - 目标:`GET /v2/<name>/referrers/<digest>` 返回 OCI index。
-- 要点:
-  - 查 `manifests.subject_digest = <digest>` 的记录,组装为
-    `application/vnd.oci.image.index.v1+json`,每项含 digest、mediaType、
-    artifactType、size、annotations。
-  - 支持 `?artifactType=` 过滤;无结果返回空 index(200,不是 404)。
-- 验收:测试覆盖过滤与空结果。
+- 实现:`manifests.Referrers(repoName, digest, artifactType)` 按
+  `subject_digest` 反查(manifests 表无 annotations 列,从 content 现解析,
+  `Meta` 相应新增 `Annotations` 字段);handler 组装
+  `application/vnd.oci.image.index.v1+json`,descriptor 含 digest、
+  mediaType、size、artifactType(可空则省略)、annotations(非空才带);
+  `?artifactType=` 精确过滤;未知仓库/无结果一律 200 空 index
+  (`"manifests":[]` 非 null),digest 非法 400。
+- 验收记录(2026-09-29):crane 推 single-arch busybox 后手写 PUT sbom
+  referrer,`curl .../referrers/<digest>` 返回正确 envelope(Content-Type
+  为 index 媒体类型,descriptor 五项齐全),过滤 1/0 正确;T15 将用 oras
+  做端到端。
+- 测试覆盖:空结果(未知 subject/未知仓库)、descriptor 字段、artifactType
+  过滤、非法 digest、非 GET 拒绝。
 
-### T15 Referrers 端到端验证
+### T15 Referrers 端到端验证 [done]
 
 - 目标:真实签名/SBOM 附件链路可用。
-- 验收:
-  - `oras attach localhost:1900/demo/app:v1 sbom.json
-    --artifact-type application/vnd.example.sbom`
-  - `oras discover localhost:1900/demo/app:v1` 能看到附件;
-    `curl .../referrers/<digest>` 返回内容一致。
+- 验收记录(2026-09-29,宿主机 oras( go run oras.land/oras/cmd/oras@latest)
+  + crane,localhost:1930 实例):
+  - `oras attach localhost:1930/demo/app:v1 sbom.json:application/json
+    --artifact-type application/vnd.example.sbom` 成功
+    (绝对路径需加 `--disable-path-validation`)。
+  - `oras discover localhost:1930/demo/app:v1` 列出 sbom 附件;再 attach
+    signature 附件后两个都在,`--artifact-type` 过滤正确。
+  - `curl .../referrers/<subject-digest>` 的 digest/artifactType/
+    annotations/size 与 oras 推送内容一致;referrer manifest 可按 digest
+    拉取,其层 blob 字节与原始 sbom.json 完全一致。
 
 ## 阶段六:网页端
 
-### T16 首页 + 仓库列表页
+### T16 首页 + 仓库列表页 [done]
 
 - 目标:改造 `app/views/home`,首页放搜索框 + 最近推送仓库;新增
   `/repos` 分页列表(名称、tag 数、总大小、更新时间)。
-- 要点:服务端渲染 templ + 分页组件(`app/assets/js/ui/pagination.tsx`
-  已有现成组件);按 updated_at 倒序。
-- 验收:浏览器打开可见仓库列表,分页可点;空库时有 empty state。
+- 实现:
+  - catalog 服务扩展 `Page(page, perPage)` / `Recent(n)`:按最近活动
+    倒序(取 repo/tags/manifests 的 updated_at 最大值,repositories 行
+    自身在推送时不会被更新,不能直接用),大小 = 该仓库 repo_blobs 关联
+    blob 的 size 之和。
+  - 视图:新 `layouts.Registry` 共享骨架(顶栏导航 + 注册表样式)、
+    重写 `home/index.templ`(搜索框 form → /repos?q= + 最近 5 条)、
+    新 `app/views/repos/list.templ`(aw-table 列表 + aw-empty 空态)。
+  - 分页复用现有组件:新 island `app/assets/js/islands/pagination.tsx`
+    包装 `ui/pagination`,onPageChange 跳转 `base?&page=N`;props 经
+    `<script type="application/json">` 注入(templ 把 script 体当纯文本,
+    整段 script 标签在 Go helper `islandScript` 里拼)。
+  - `home_api.ReposAction`:`?page=` 解析(非法回退 1)、页界钳制、
+    `q` 透传保留进分页 base(T17 实现过滤);`airway js:build` 重出
+    dist(新增 app.css,旧 dist 是脚手架时期产物已不含样式)。
+- 验收:浏览器打开可见仓库列表,分页可点;空库时有 empty state。测试
+  覆盖:首页渲染/空态/最近倒序、列表空态、分页(page=2/越界钳制/非法
+  值)、q 保留;curl 冒烟 12 仓库两页 + dev bundle 含分页 island。
 
-### T17 镜像搜索
+### T17 镜像搜索 [done]
 
 - 目标:按仓库名模糊搜索。
-- 要点:搜索走 `/repos?q=`,SQL `LIKE`(注意转义 `%`/`_`);结果页与列表页
-  复用;无结果显示 empty state + 清空搜索入口。
-- 验收:输入关键词过滤正确,特殊字符不报错;测试覆盖。
+- 实现:`catalog.Page(page, perPage, q)` 增加按名过滤,SQL
+  `name LIKE @pattern ESCAPE '\'`(`escapeLike` 转义 `%`/`_`/`\`,用户输入
+  全部按字面匹配);`ReposAction` 透传 `q`;列表页标题下显示
+  `Results for "q"`,无结果时 empty state 带 Clear search 入口(链回
+  /repos);分页 base 保留 q(T16 已就绪)。
+- 验收记录(2026-09-29,tmp/t17-smoke.db + curl):`q=e2e` 命中全部 3 条、
+  `q=push` 只命中 e2e/pushapp、`q=%`/`q=_` 仅命中 `weird/100%_x`
+  (通配符被转义,未退化为全匹配)、`q=weird\` 等特殊字符 200 不报错、
+  无结果时正确渲染 empty state + Clear search。
+- 测试覆盖:关键词过滤、通配符转义(`%`/`_`/反斜杠/引号)、空结果的
+  清空入口;原「分页 base 保留 q」用例改为 q 命中数据的场景(过滤生效
+  后 q=foo 不再翻页)。
 
-### T18 镜像详情页
+### T18 镜像详情页 [done]
 
 - 目标:`/repos/<name>` 展示该仓库的 tag 列表与 manifest 详情。
-- 要点:
-  - tag 表:tag 名、digest、大小、推送时间。
-  - 点开 tag:layers(config + 各层,digest、size、mediaType)、总大小、
-    manifest digest、annotations。
-  - 有 referrers 时列出附件(artifactType + digest,链到对应 manifest)。
-- 验收:多 tag、多架构(index)镜像展示正确;测试覆盖。
+- 实现:
+  - 路由 `GET /repos/*path`(仓库名多级,通配接后取整段 name);`RepoAction`
+    渲染 tag 表,?tag=/?digest= 选中 manifest 时展开详情(未知引用 404
+    但仍渲染仓库 + 提示条)。
+  - `manifests.Expand`:从 content 解析 config/layers(artifact 的 blobs
+    并入 layers)、index 子项(带 platform 标签);TotalSize 对 index
+    递归累计子 manifest 内容(库中已被删的子项只计 descriptor 声明值)。
+  - `catalog.Detail`:tag 表聚合(名称排序,digest 去重后复用 Expand 的
+    size);`repos/detail.templ`:tag 表(tag/digest/大小/推送时间)、
+    manifest 区(digest、mediaType、artifactType、annotations、总大小、
+    subject 回链)、Platforms 表(index)或 Config+Layers 表、Referrers
+    表(artifactType/digest 链到 `?digest=` 可继续下钻)。
+- 验收记录(2026-09-29,tmp/t18-smoke.db + curl):e2e/pushapp 四 tag
+  (含 docker schema2 与 OCI index)列表正确;`?tag=v1` 出 config+layers
+  与总大小;`?tag=v2` 出 index 平台表(linux/arm64/v8);子 manifest 按
+  digest 下钻正常;未知仓库/未知 tag 均 404。
+- 测试覆盖:tag 表(排序、同 digest 多 tag、size 复用)、?tag= 展开
+  (config/layers/annotations/总大小)、index 展开(平台标签、递归
+  TotalSize)、referrers 列表与 subject 回链、未知仓库/未知 tag 404。
 
 ## 阶段七:收尾
 
-### T19 配置整理
+### T19 配置整理 [done]
 
 - 目标:把硬编码项收进配置。
-- 要点:storage 根目录(`DATA_DIR`,默认 `data/storage`)、上传大小上限、
-  认证开关占位(默认关,留出 middleware 扩展点)。
-- 验收:改配置生效;`.env.example` 同步;测试不依赖具体目录。
+- 实现:新服务 `app/services/registrycfg` 统一三个旋钮,均每次调用读 env
+  (与项目其他配置一致,改动需重启):
+  - `DATA_DIR`:blob 存储根目录,默认 `./data/storage`;`STORAGE_ROOT`
+    作为旧名兼容回退(原 `blobstore.DefaultRoot` 已删,调用点改走
+    `registrycfg.DataDir`,GC 子命令同);
+  - `MAX_UPLOAD_SIZE`:单请求 blob 上传上限(字节),0/未设/非法 =
+    不限(默认);超限时 monolithic POST 与 PATCH 在 body 读取处
+    `http.MaxBytesReader` 截断 → 413 `TOO_LARGE`,PATCH 超限丢弃
+    session,其余读错误仍 500 且保留 session;
+  - `REGISTRY_AUTH_ENABLED`:认证开关占位,默认关;开启后
+    `middlewares.RegistryAuth` 对 `/v2/` 一律 401(`WWW-Authenticate:
+    Basic`,OCI 错误体),credential backend(basic/htpasswd)后续接入
+    此扩展点;网页端不受该中间件影响。挂载:空前缀 group + `Routes`
+    签名放宽为 `gin.IRouter`。
+- 验收记录(2026-09-29,真实实例 + curl):`DATA_DIR=./tmp/t19-data` 时
+  blob 写入该目录且 `go run . gc` 在同一目录回收;`MAX_UPLOAD_SIZE=32`
+  时超帽 POST/PATCH 均 413 `TOO_LARGE`、帽内 201;`REGISTRY_AUTH_ENABLED=true`
+  时 `/v2/` 401 带 Basic challenge,网页 /repos 仍 200。
+- 测试覆盖:registrycfg 三个旋钮(优先级/非法回退)、中间件开/关、
+  上传超限(POST/PATCH/帽内/不限默认)、routes 测试验证开关真实挂载。
+  测试全部用 `t.TempDir()`/`t.Setenv`,不依赖具体目录。`.env.example`
+  已同步新增 Registry 小节。
 
-### T20 OCI Distribution Spec conformance 测试
+### T20 OCI Distribution Spec conformance 测试 [done]
 
 - 目标:用官方套件验证兼容性。
-- 要点:clone `opencontainers/distribution-spec`,用其 conformance 测试,
-  环境变量指向本地实例,覆盖 pull / push / content discovery / referrers
-  各组。
-- 验收:全部通过;把失败项修完或明确记录已知差异。
+- 做法:clone `opencontainers/distribution-spec` 到 `deps/`(checkout v1.1.1,
+  已加入 .gitignore),`conformance/` 下 `go test -c` 编译,环境变量指向本地
+  实例,四组全跑(Pull / Push / Content Discovery / Content Management)。
+- 验收记录(2026-09-29,v1.1.1 套件,74 specs):**74 Passed / 0 Failed /
+  5 Skipped(skipped 均为套件按环境条件的自带条件跳过)**。复跑命令:
+  `LISTEN=127.0.0.1:1930 DATA_DIR=… DSN=… go run .`,再于
+  `deps/distribution-spec/conformance` 执行
+  `OCI_ROOT_URL=http://127.0.0.1:1930 OCI_NAMESPACE=conformance/test
+  OCI_CROSSMOUNT_NAMESPACE=conformance/other OCI_TEST_PULL=1 OCI_TEST_PUSH=1
+  OCI_TEST_CONTENT_DISCOVERY=1 OCI_TEST_CONTENT_MANAGEMENT=1 ./conformance.test`。
+- 首轮 66/8,修完的 8 项失败(全部落地为真实功能/修复,非跳过):
+  1. **blob DELETE**(04 组必需,顺带补齐 roadmap 管理操作):
+     `DELETE /v2/<name>/blobs/<digest>` → 202;解本仓库关联,无其他仓库
+     引用时删文件+行;未被本仓库链接 → 404 `BLOB_UNKNOWN`。
+  2. **存储 content 重解析的 mediaType 回退**:Delete/GC/Referrers 重解析
+     存量 content 原来传空 contentType,文档本身无 mediaType 字段时
+     (套件 emptyLayerManifest 即如此,类型全靠 PUT Content-Type)必现
+     "missing media type" 500;统一改传行内 `m.MediaType`。
+  3. **`OCI-Subject` 响应头**(OCI 1.1):PUT 带 subject 的 manifest 时
+     回显 subject digest;`manifests.Store` 签名改为返回 `(digest, *Meta,
+     error)`。
+  4. **GET upload session**:断点续传查进度,204 + Range + Location +
+     Docker-Upload-UUID(原仅 PUT/PATCH/DELETE)。
+  5. **tags/list 分页**:`n` 上限(非法/<1 → 400)、`last` 开区间续读,
+     字典序(last 先切,n 再截)。
+  6. **referrers artifactType 回退**:manifest 无 artifactType 字段时按
+     OCI 1.1 用 config descriptor 的 mediaType 参与过滤与输出;过滤生效
+     时响应带 `OCI-Filters-Applied: artifactType`。
+- 回归:上述各项均有单测(blob 删除/共享、无 mediaType 文档删除、
+  OCI-Subject、upload status、tags 分页、artifactType 回退);
+  `go vet ./... && go test ./...` 全绿。
 
-### T21 文档与清理
+### T21 文档与清理 [done]
 
 - 目标:收尾。
-- 要点:README 补使用方式(docker 配置示例、网页入口)、已知限制;过一遍
-  代码,删掉脚手架遗留的无用文件;确认注释与实现一致。
-- 验收:`go vet ./... && go test ./...` 全绿;两份 README 同步。
+- 实现:
+  - README.md / README.zh-CN.md 重写为面向使用者的文档:快速开始、docker
+    配置示例(insecure-registries)、crane/oras、网页端入口、配置项表
+    (LISTEN/DSN/DATA_DIR/MAX_UPLOAD_SIZE/REGISTRY_AUTH_ENABLED/URL_PREFIX)、
+    GC 用法、已知限制(无认证占位、无内置 TLS、上传 session 内存态、
+    单节点 SQLite 为主、无配额/只读);删掉脚手架自带的 Desktop 应用与
+    `airway generate` 示例段落。两份内容一一对应。
+  - 删除脚手架遗留:`app/api/storage_api/`(通用文件上传 demo,含测试)、
+    `app/api/openapi_api/`(自动 openapi.json)、`v2_api`/`health_api` 的
+    openapi 描述文件、`apiGroupRoutes`/`openapiRoutes` 挂载与路由测试
+    期望、多余的 `.keep`(api/services/middlewares/db:migrate)。
+    文件按规则移入 `~/protected/tmp/`,未用 rm。
+  - 注释与实现核对:routes.go 各段注释、registrycfg 的 STORAGE_ROOT
+    兼容说明、listTags/Store 等 T20 改动处的注释均已同步;全库无
+    TODO/FIXME 漂移。
+- 验收:`go vet ./... && go test ./...` 全绿(10 个包);两份 README
+  同步更新。
+
+### T22 修复单段仓库名的上传路由 [done]
+
+- 目标:`postgres` 这类不带斜杠的仓库名无法推送。
+- 实现:`dispatch.go` 的 `parseUploadStartRef` / `parseUploadSessionRef`
+  各多要求了一段路径,单段名匹配不上上传路由,fallthrough 到 blob 路由
+  把 `uploads` 当 digest 报 `400 invalid digest "uploads"`;改为 ≥3 / ≥4
+  段。新增 `TestSingleSegmentRepoUpload` 覆盖 monolithic POST 与
+  POST+PUT session 两条路径(原有测试全用两段名,未暴露此问题)。
+- 验收:`go test ./...` 全绿;`nerdctl push
+  air-registry.localhost:8443/postgres:latest` 端到端通过。
+
+### T23 本地 HTTPS 客户端工具链(Caddy + lima) [done]
+
+- 目标:HTTPS 入口的上游端口跟随 `.env` 的 `LISTEN`;为 lima
+  (nerdctl.lima)提供一键客户端配置。
+- 实现:
+  - `Caddyfile` 入库,上游改为 `{$AIR_REGISTRY_UPSTREAM:127.0.0.1:1905}`,
+    由 `just caddy` 启动时从 `.env` 的 `LISTEN` 注入,不再硬编码 1905。
+  - 新增 `scripts/setup-lima-client.sh`(just 入口 `setup-lima-client`,
+    幂等):lima VM 内写 `/etc/hosts` 把 `air-registry.localhost` 指向
+    宿主机(`host.lima.internal`)、信任 Caddy 根 CA、在 `lima.yaml env`
+    与 `/etc/environment` 两处加 `NO_PROXY`(分别覆盖 nerdctl CLI 与
+    rootless containerd daemon,后者发 pull 请求),按提示重启实例;
+    `limactl delete` 重建后重跑即可。
+  - `scripts/copy-docker-cert.sh` 一并入库(just/README 此前已引用)。
+  - 两份 README 同步:Caddy 一节改为反代 `LISTEN`;新增 lima 小节说明
+    EOF 成因与用法;`.env.example` 的 LISTEN 注释注明 Caddy 跟随。
+- 验收:`just caddy` 启动后 push/pull 冒烟通过;脚本重复运行输出
+  already configured;`go test ./...` 全绿。
 
 ## 后续扩展(暂不做,仅记录)
 

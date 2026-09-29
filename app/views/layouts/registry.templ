@@ -1,0 +1,58 @@
+package layouts
+
+import (
+	"github.com/daqing/airway/lib/utils"
+)
+
+// Registry renders the shared chrome of the web UI: header with brand and
+// navigation, a centered content column, and the registry stylesheet.
+// Pages compose their content inside it:
+//
+//	@layouts.Registry("Repositories") {
+//		…page content…
+//	}
+templ Registry(title string) {
+	@Base(title) {
+		<style>
+			.registry { min-height: 100vh; background: var(--aw-bg); color: var(--aw-fg); font-family: var(--aw-font); }
+			.registry a { color: var(--aw-primary); text-decoration: none; }
+			.registry a:hover { text-decoration: underline; }
+			.registry header {
+				display: flex; align-items: center; gap: 24px;
+				padding: 14px 24px; border-bottom: 1px solid var(--aw-border);
+			}
+			.registry .brand { font-size: 17px; font-weight: 650; color: var(--aw-fg); letter-spacing: -0.2px; }
+			.registry .brand:hover { text-decoration: none; }
+			.registry nav { display: flex; gap: 16px; font-size: 14px; }
+			.registry nav a { color: var(--aw-muted); }
+			.registry nav a:hover { color: var(--aw-fg); text-decoration: none; }
+			.registry-main { width: min(960px, calc(100% - 48px)); margin: 0 auto; padding: 32px 0 64px; }
+			.registry h1 { font-size: 24px; letter-spacing: -0.4px; margin: 0; }
+			.registry .muted { color: var(--aw-muted); }
+			.registry .section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 32px 0 14px; }
+			.registry .section-head h2 { font-size: 15px; margin: 0; }
+			.registry code {
+				font-family: var(--aw-mono); font-size: 0.9em;
+				background: var(--aw-surface); border: 1px solid var(--aw-border);
+				border-radius: var(--aw-radius-sm); padding: 1px 5px;
+			}
+			.registry .search { display: flex; gap: 10px; margin-top: 22px; max-width: 560px; }
+			.registry .search input { flex: 1; }
+			.registry .hero { padding: 24px 0 8px; }
+			.registry .hero .muted { margin: 8px 0 0; }
+			.registry table a { font-weight: 500; }
+			.registry .aw-empty { margin: 40px 0; }
+		</style>
+		<div class="registry">
+			<header>
+				<a class="brand" href={ templ.URL(utils.URLPrefix() + "/") }>Air Registry</a>
+				<nav>
+					<a href={ templ.URL(utils.URLPrefix() + "/repos") }>Repositories</a>
+				</nav>
+			</header>
+			<main class="registry-main">
+				{ children... }
+			</main>
+		</div>
+	}
+}
