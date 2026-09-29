@@ -27,6 +27,16 @@ func (h *Handler) Dispatch(c *gin.Context) {
 		return
 	}
 
+	// _catalog is reserved by the spec and can never be a repository name.
+	if path == "_catalog" {
+		if c.Request.Method == http.MethodGet {
+			h.listCatalog(c)
+		} else {
+			ociError(c, http.StatusNotFound, "UNSUPPORTED", "unsupported API endpoint")
+		}
+		return
+	}
+
 	segs := strings.Split(path, "/")
 	if name, uuid, ok := parseUploadSessionRef(segs); ok {
 		if !validRepoName(name) {

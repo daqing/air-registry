@@ -171,10 +171,16 @@ README「目标与需求」。
   - 注:crane 用 `go run github.com/google/go-containerregistry/cmd/crane@latest`
     跑在宿主机,localhost 默认按 HTTP 直连;VM 环境配置见 T07 注。
 
-### T11 `/v2/_catalog`
+### T11 `/v2/_catalog` [done]
 
 - 目标:仓库枚举,支持 `n` / `last` 分页。
-- 验收:`curl 'http://localhost:1900/v2/_catalog?n=2'` 分页正确;测试覆盖。
+- 实现:新服务 `app/services/catalog`,`List(last, n)` 按 name 字典序、
+  `last` 开区间、`n+1` 探一行判断后续页;`v2_api/catalog.go` 返回
+  `{"repositories": [...]}`(空库为 `[]` 非 null),有后续页时带
+  `Link: </v2/_catalog?n=..&last=..>; rel="next"`;`n` 非法(<1 或非数字)
+  400。`_catalog` 为规范保留字,在 Dispatch 最前面单独路由。
+- 验收:`curl 'http://localhost:1900/v2/_catalog?n=2'` 分页正确;测试覆盖
+  (空库、排序、Link 翻页、仅 last、越界、非法 n、非 GET 405→404)。
 
 ### T12 删除 manifest
 
