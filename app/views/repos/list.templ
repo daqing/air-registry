@@ -1,0 +1,68 @@
+package repos
+
+import (
+	"strconv"
+
+	"github.com/daqing/air-registry/app/services/catalog"
+	"github.com/daqing/air-registry/app/views/layouts"
+	"github.com/daqing/airway/lib/utils"
+)
+
+type ListProps struct {
+	Repos     []catalog.RepoSummary
+	Page      int
+	PageCount int
+	// Base is the pagination base URL, e.g. "/repos?q=foo"; the island
+	// appends &page=N.
+	Base string
+}
+
+// List renders the paginated repository list: name, tag count, total size
+// and last activity, ordered by most recent activity.
+templ List(props ListProps) {
+	@layouts.Registry("Repositories · Air Registry") {
+		<div class="section-head">
+			<h1>Repositories</h1>
+		</div>
+		if len(props.Repos) == 0 {
+			<div class="aw-empty">
+				<div class="aw-empty-title">No repositories</div>
+				<div>
+					Push an image with <code>docker push</code> to create one, e.g.
+					<code>docker push localhost:1905/demo/app:v1</code>
+				</div>
+			</div>
+		} else {
+			<div class="aw-table-wrap">
+				<table class="aw-table">
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Tags</th>
+							<th>Size</th>
+							<th>Updated</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, r := range props.Repos {
+							<tr>
+								<td><a href={ templ.URL(utils.URLPrefix() + "/repos/" + r.Name) }>{ r.Name }</a></td>
+								<td>{ strconv.FormatInt(r.TagCount, 10) }</td>
+								<td>{ layouts.FormatSize(r.TotalSize) }</td>
+								<td title={ r.UpdatedAt.Format("2006-01-02 15:04:05 MST") }>{ layouts.FormatTime(r.UpdatedAt) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+		if props.PageCount > 1 {
+			@paginationIsland(props.Page, props.PageCount, props.Base)
+		}
+	}
+}
+
+templ paginationIsland(page, pageCount int, base string) {
+	<div data-island="pagination" data-island-id="repos"></div>
+	@templ.Raw(islandScript(islandProps(page, pageCount, base)))
+}

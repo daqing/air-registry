@@ -257,13 +257,28 @@ README「目标与需求」。
 
 ## 阶段六:网页端
 
-### T16 首页 + 仓库列表页
+### T16 首页 + 仓库列表页 [done]
 
 - 目标:改造 `app/views/home`,首页放搜索框 + 最近推送仓库;新增
   `/repos` 分页列表(名称、tag 数、总大小、更新时间)。
-- 要点:服务端渲染 templ + 分页组件(`app/assets/js/ui/pagination.tsx`
-  已有现成组件);按 updated_at 倒序。
-- 验收:浏览器打开可见仓库列表,分页可点;空库时有 empty state。
+- 实现:
+  - catalog 服务扩展 `Page(page, perPage)` / `Recent(n)`:按最近活动
+    倒序(取 repo/tags/manifests 的 updated_at 最大值,repositories 行
+    自身在推送时不会被更新,不能直接用),大小 = 该仓库 repo_blobs 关联
+    blob 的 size 之和。
+  - 视图:新 `layouts.Registry` 共享骨架(顶栏导航 + 注册表样式)、
+    重写 `home/index.templ`(搜索框 form → /repos?q= + 最近 5 条)、
+    新 `app/views/repos/list.templ`(aw-table 列表 + aw-empty 空态)。
+  - 分页复用现有组件:新 island `app/assets/js/islands/pagination.tsx`
+    包装 `ui/pagination`,onPageChange 跳转 `base?&page=N`;props 经
+    `<script type="application/json">` 注入(templ 把 script 体当纯文本,
+    整段 script 标签在 Go helper `islandScript` 里拼)。
+  - `home_api.ReposAction`:`?page=` 解析(非法回退 1)、页界钳制、
+    `q` 透传保留进分页 base(T17 实现过滤);`airway js:build` 重出
+    dist(新增 app.css,旧 dist 是脚手架时期产物已不含样式)。
+- 验收:浏览器打开可见仓库列表,分页可点;空库时有 empty state。测试
+  覆盖:首页渲染/空态/最近倒序、列表空态、分页(page=2/越界钳制/非法
+  值)、q 保留;curl 冒烟 12 仓库两页 + dev bundle 含分页 island。
 
 ### T17 镜像搜索
 

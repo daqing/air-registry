@@ -8,10 +8,17 @@ package home
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-import "github.com/daqing/air-registry/app/views/layouts"
+import (
+	"strconv"
 
-// Index renders the welcome page without a database dependency.
-func Index() templ.Component {
+	"github.com/daqing/air-registry/app/services/catalog"
+	"github.com/daqing/air-registry/app/views/layouts"
+	"github.com/daqing/airway/lib/utils"
+)
+
+// Index renders the home page: a search box plus the most recently pushed
+// repositories.
+func Index(recent []catalog.RepoSummary) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -44,13 +51,142 @@ func Index() templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<style>\n\t\t\t.welcome-page {\n\t\t\t\t--bg: #101319; --ink: #f3f4ef; --muted: #9a9eaa; --line: #2b303a;\n\t\t\t\t--lime: #c2f16b; --code-bg: #171b23;\n\t\t\t\tcolor-scheme: dark;\n\t\t\t\tmin-height: 100vh; display: flex; align-items: center; justify-content: center;\n\t\t\t\tbackground: var(--bg); color: var(--ink);\n\t\t\t\tfont-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n\t\t\t\t-webkit-font-smoothing: antialiased;\n\t\t\t}\n\t\t\t@media (prefers-color-scheme: light) {\n\t\t\t\t.welcome-page {\n\t\t\t\t\t--bg: #fafaf7; --ink: #232820; --muted: #6d7369; --line: #dfe2d7;\n\t\t\t\t\t--lime: #5d763c; --code-bg: #f0f2ea;\n\t\t\t\t\tcolor-scheme: light;\n\t\t\t\t}\n\t\t\t}\n\t\t\t.welcome-page * { box-sizing: border-box; margin: 0; }\n\t\t\t.welcome { width: min(680px, calc(100% - 48px)); padding-block: 64px; }\n\t\t\t.welcome h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 650; letter-spacing: -2.5px; }\n\t\t\t.welcome h1 .accent { color: var(--lime); }\n\t\t\t.welcome .lead { margin-top: 14px; font-size: 16px; line-height: 1.7; color: var(--muted); }\n\t\t\t.welcome code {\n\t\t\t\tfont-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", monospace;\n\t\t\t\tfont-size: .9em; background: var(--code-bg); border: 1px solid var(--line);\n\t\t\t\tborder-radius: 4px; padding: 2px 6px;\n\t\t\t}\n\t\t\t.welcome .next { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 28px; }\n\t\t\t.welcome h2 { font-size: 11px; font-weight: 650; letter-spacing: 1.6px; color: var(--lime); text-transform: uppercase; }\n\t\t\t.welcome .commands { margin-top: 18px; display: grid; gap: 10px; }\n\t\t\t.welcome .command { display: grid; grid-template-columns: minmax(0, auto) 1fr; gap: 16px; align-items: baseline; }\n\t\t\t.welcome .command span { font-size: 12px; color: var(--muted); }\n\t\t\t.welcome .footer { margin-top: 40px; font-size: 12px; line-height: 1.6; color: var(--muted); }\n\t\t\t@media (max-width: 560px) {\n\t\t\t\t.welcome .command { grid-template-columns: 1fr; gap: 3px; }\n\t\t\t}\n\t\t</style> <main class=\"welcome-page\"><div class=\"welcome\"><h1>Airway works<span class=\"accent\">.</span></h1><p class=\"lead\">Your new Airway application is up and running. This page is served by <code>app/api/home_api/index_action.go</code> and rendered from <code>app/views/home/index.templ</code> — replace them with your own.</p><section class=\"next\"><h2>Keep building</h2><div class=\"commands\"><div class=\"command\"><code>just dev</code><span>start the dev server with live reload</span></div><div class=\"command\"><code>airway generate api posts</code><span>scaffold an API namespace under app/api/</span></div><div class=\"command\"><code>airway generate action posts show</code><span>add an action to an existing API module</span></div><div class=\"command\"><code>airway generate model post</code><span>scaffold a model in app/models/</span></div><div class=\"command\"><code>airway generate service post title:string</code><span>scaffold a CRUD service</span></div><div class=\"command\"><code>airway generate migration create_posts</code><span>new .up.sql / .down.sql pair in db/migrate/</span></div><div class=\"command\"><code>airway db:migrate</code><span>apply pending migrations</span></div><div class=\"command\"><code>go run . repl</code><span>explore your models interactively</span></div></div></section><p class=\"footer\">Serving on <code>http://localhost:1905</code> — change <code>LISTEN</code> in <code>.env</code> to bind another address.<br>Read the docs at <a href=\"https://github.com/daqing/airway#readme\">github.com/daqing/airway</a></p></div></main>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<section class=\"hero\"><h1>Explore your registry</h1><p class=\"muted\">A private OCI registry for container images and artifacts.</p><form class=\"search\" action=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var3 templ.SafeURL
+			templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(utils.URLPrefix() + "/repos")
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 18, Col: 61}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "\" method=\"get\" role=\"search\"><input class=\"aw-input\" type=\"search\" name=\"q\" placeholder=\"Search repositories…\" aria-label=\"Search repositories\"> <button class=\"aw-button aw-button-primary\" type=\"submit\">Search</button></form></section><section><div class=\"section-head\"><h2>Recently pushed</h2><a href=\"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var4 templ.SafeURL
+			templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(utils.URLPrefix() + "/repos"))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 26, Col: 53}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\">View all →</a></div>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			if len(recent) == 0 {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<div class=\"aw-empty\"><div class=\"aw-empty-title\">No repositories yet</div><div>Push an image to see it here, e.g. <code>docker push localhost:1905/demo/app:v1</code></div></div>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<div class=\"aw-table-wrap\"><table class=\"aw-table\"><thead><tr><th>Name</th><th>Tags</th><th>Size</th><th>Updated</th></tr></thead> <tbody>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				for _, r := range recent {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<tr><td><a href=\"")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var5 templ.SafeURL
+					templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinURLErrs(templ.URL(utils.URLPrefix() + "/repos/" + r.Name))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 50, Col: 72}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\">")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var6 string
+					templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(r.Name)
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 50, Col: 83}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</a></td><td>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var7 string
+					templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(strconv.FormatInt(r.TagCount, 10))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 51, Col: 48}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</td><td>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var8 string
+					templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(layouts.FormatSize(r.TotalSize))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 52, Col: 46}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "</td><td title=\"")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var9 string
+					templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(r.UpdatedAt.Format("2006-01-02 15:04:05 MST"))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 53, Col: 66}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "\">")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var10 string
+					templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(layouts.FormatTime(r.UpdatedAt))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `home/index.templ`, Line: 53, Col: 102}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, "</td></tr>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, "</tbody></table></div>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, "</section>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			return nil
 		})
-		templ_7745c5c3_Err = layouts.Base("Airway Works", "Your new Airway application is up and running.").Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = layouts.Registry("Air Registry").Render(templ.WithChildren(ctx, templ_7745c5c3_Var2), templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

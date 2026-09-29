@@ -39,6 +39,7 @@ func Routes(r *gin.Engine) {
 // prefix; see App.Handler.
 func PublicRoutes(r *gin.Engine) {
 	r.GET("/", home_api.IndexAction)
+	r.GET("/repos", home_api.ReposAction)
 
 	registryStore := blobstore.New(blobstore.DefaultRoot())
 	registryAPI := &v2_api.Handler{
