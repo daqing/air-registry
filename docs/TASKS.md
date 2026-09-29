@@ -155,13 +155,21 @@ README「目标与需求」。
 
 ## 阶段四:发现、删除与回收
 
-### T10 端到端拉取验证
+### T10 端到端拉取验证 [done]
 
 - 目标:确认 pull 链路在真实客户端下完整可用。
 - 验收:
   - `docker pull localhost:1900/demo/app:v1` 成功,运行 `docker run --rm
     localhost:1900/demo/app:v1` 无异常。
   - `crane manifest` / `crane ls` / `crane blob` 均正常。
+- 验收记录(2026-09-29,reg-verify VM + 宿主机 crane v0.22.1):
+  - VM 内推 `192.168.5.2:1930/demo/app:v1/v2`(busybox,rmi 后重新
+    `docker pull` 再 `docker run --rm ... echo` 正常;T09 起 blob 按仓库
+    校验,本次 pull 顺带再次确认该改动无回归)。
+  - `crane ls` → v1/v2;`crane manifest` → OCI manifest 字节完整;
+    `crane blob` 下载层字节数与 manifest 中 size 一致(1915390)。
+  - 注:crane 用 `go run github.com/google/go-containerregistry/cmd/crane@latest`
+    跑在宿主机,localhost 默认按 HTTP 直连;VM 环境配置见 T07 注。
 
 ### T11 `/v2/_catalog`
 
