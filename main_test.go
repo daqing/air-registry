@@ -101,6 +101,27 @@ func TestEnterProjectDirRejectsMissingAndFiles(t *testing.T) {
 	}
 }
 
+func TestHasFrontendSource(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if hasFrontendSource() {
+		t.Error("hasFrontendSource() = true in an empty dir, want false")
+	}
+
+	entry := filepath.Join(dir, "app", "assets", "js", "app.tsx")
+	if err := os.MkdirAll(filepath.Dir(entry), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(entry, []byte("// entry\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if !hasFrontendSource() {
+		t.Error("hasFrontendSource() = false after creating the entry, want true")
+	}
+}
+
 func TestRunEmbeddedMigrationCommandDefersToOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

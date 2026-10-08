@@ -258,8 +258,14 @@ func runServer() {
 	// served with livereload; production serves the embedded dist bundle.
 	// A missing vendor directory aborts the boot: the source watcher skips
 	// vendor/, so a running server would never pick up a later js:install.
+	//
+	// A `go install`ed binary pointed at a data-only project directory with
+	// `-d` has no frontend sources at all, so fall back to the embedded
+	// production bundle instead of trying (and failing) to rebuild.
 	if appConfig.IsLocal {
-		if _, err := jsbuild.StartDefault(".", websocket.Broadcast); err != nil {
+		if !hasFrontendSource() {
+			log.Printf("frontend source %s not found; serving the embedded production bundle", jsbuild.EntryPoint)
+		} else if _, err := jsbuild.StartDefault(".", websocket.Broadcast); err != nil {
 			if errors.Is(err, jsbuild.ErrVendorMissing) {
 				log.Printf("frontend dev server failed: %v", err)
 				os.Exit(6)
@@ -327,6 +333,15 @@ func runEmbeddedMigrationCommand(args []string) (handled bool, err error) {
 	default: // db:status
 		return true, migrate.Status(opts)
 	}
+}
+
+// hasFrontendSource reports whether the local frontend entry exists. It
+// distinguishes a source checkout (rebuild in memory with livereload) from a
+// data-only project directory driven by an installed binary (serve the
+// embedded bundle).
+func hasFrontendSource() bool {
+	info, err := os.Stat(jsbuild.EntryPoint)
+	return err == nil && !info.IsDir()
 }
 
 // loadEnvFile loads .env from the current working directory, if present.
