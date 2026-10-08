@@ -31,14 +31,72 @@ pull、push、content discovery、content management)。
 
 ## 快速开始
 
+直接安装二进制,无需 clone 源码:
+
 ```bash
-cp .env.example .env   # 然后设置 AIRWAY_ENV=local、DSN 和 LISTEN
-go run . db:migrate    # 建表
-go run .               # 启动服务
+go install github.com/daqing/air-registry@latest
 ```
 
-按 `.env.example` 的默认值,服务监听 `127.0.0.1:1905`。本地典型的
-`DSN` 为 `sqlite://./tmp/registry-dev.db`。
+然后创建一个项目目录存放 `.env` 和数据库,用 `-d` 指向它运行:
+
+```bash
+mkdir -p ~/air-registry
+cat > ~/air-registry/.env <<'EOF'
+AIRWAY_ENV="prod"
+LISTEN="127.0.0.1:1905"
+EOF
+
+air-registry -d ~/air-registry server
+```
+
+浏览器打开 <http://127.0.0.1:1905/>。首次启动会用二进制内置的迁移自动
+建表;因为 `-d` 固定了项目目录、且 `.env` 未设置 `DSN`/`DATA_DIR`,SQLite
+数据库为 `~/air-registry/registry.db`,blob 存放在
+`~/air-registry/data/storage`。`go install` 会把二进制放到 `$GOBIN`
+(默认 `$HOME/go/bin`),请确认它在 `PATH` 中。
+
+> `AIRWAY_ENV` 请用 `local` 以外的值(如上例的 `prod`):`local` 是前端源码
+> 开发模式,需要源码树里的 `vendor/` 目录;而安装好的二进制直接使用内置的
+> 生产前端 bundle。
+
+## 命令行用法
+
+`air-registry` 是本项目的二进制(`go install` 后位于 `$GOBIN`)。不带参数
+运行时直接启动 HTTP 服务;其它命令转发给内置的 Airway CLI。
+
+```
+Usage: air-registry [-d <project-dir>] [command]
+
+  -d, --dir <dir>   指定项目目录:加载其中的 .env,并把相对路径(SQLite 数据库、
+                    DATA_DIR、前端 bundle)解析到该目录内,从而可在任意目录运行
+  server            启动 HTTP 服务(默认)
+  gc                回收没有任何 manifest 引用的 blob
+  <command>         其它 Airway CLI 命令(db:migrate、repl、...)
+```
+
+| 选项 | 说明 |
+|---|---|
+| `-d <目录>`, `--dir <目录>`, `-d=<目录>` | 指定项目目录。二进制会切换到 `<目录>` 并加载其中的 `.env`,因此相对路径(SQLite 数据库、`DATA_DIR`、开发环境的前端 bundle)都落在项目内。位置任意。若 `.env` 未设置 `DSN` 与 `DATA_DIR`,则回退为 `<目录>/registry.db` 与 `<目录>/data/storage`。 |
+| `-v`, `--version` | 打印版本号后退出,不加载 `.env`。 |
+
+常用命令:
+
+```bash
+air-registry db:migrate                       # 建表(当前目录即项目)
+air-registry server                           # 启动服务
+
+air-registry -d /srv/air-registry db:migrate  # 同上,但针对 /srv/air-registry
+air-registry -d /srv/air-registry server
+air-registry -d /srv/air-registry gc          # 垃圾回收
+air-registry server -d /srv/air-registry      # -d 也可以放在命令之后
+```
+
+其它 Airway CLI 命令(`repl`、`db:create`、`db:drop` 等)同样可用,例如
+`air-registry -d /srv/air-registry repl`。
+
+当项目目录下没有 `db/migrate`(由安装好的二进制驱动的项目目录通常如此)时,
+服务启动会自动应用二进制内置的迁移;`db:migrate`、`db:rollback`、`db:status`
+也同样使用内置迁移。
 
 ## 使用 registry
 
@@ -185,8 +243,10 @@ DSN=sqlite://./tmp/registry-dev.db go run . gc
 ## 开发
 
 ```bash
-go run .            # 启动服务(local 环境下前端 bundle 在内存中热构建)
-go test ./...       # 单元与 API 测试
+cp .env.example .env   # 设置 AIRWAY_ENV=local、DSN 和 LISTEN
+go run . db:migrate    # 根据 ./db/migrate 建表/迁移
+go run .               # 启动服务(local 环境下前端 bundle 在内存中热构建)
+go test ./...          # 单元与 API 测试
 go vet ./...
 ```
 

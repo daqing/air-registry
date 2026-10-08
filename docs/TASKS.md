@@ -460,6 +460,30 @@ README「目标与需求」。
   凭据、非 Basic scheme)、routes 真实挂载(开认证后错误凭据 401、正确
   凭据 200)。
 
+### T25 `-d` 指定项目目录与内置迁移 [done]
+
+- 目标:`go install` 得到的 `air-registry` 二进制可在任意目录运行,用
+  `-d <目录>` 指定项目目录:加载其中的 `.env`,并让 SQLite 数据库、
+  `DATA_DIR` 等相对路径都落在该目录内;从而无需 clone 源码即可使用。
+- 实现:
+  - `main.go` 新增 `-d`/`--dir`(支持 `-d <目录>`、`-d=<目录>`,位置任意):
+    `enterProjectDir` 展开 `~`、校验目录并 `chdir` 进入;
+    `applyProjectDefaults` 在 `.env` 未设置 `DSN`/`DATA_DIR` 时回退到
+    `<目录>/registry.db` 与 `<目录>/data/storage`。`.env` 加载集中到
+    `main`,server、gc、CLI 共用。
+  - 新增 `db/embed.go` 内嵌 `db/migrate/*.sql`;项目目录下没有 `db/migrate`
+    时,服务启动自动应用内置迁移,`db:migrate`/`db:rollback`/`db:status`
+    也改用内置迁移;有 `db/migrate`(源码仓库)时仍由 Airway CLI 负责,
+    保留 schema snapshot 与 Go DSL 迁移。
+  - 新增 `-d` 与版本选项的 usage 文本;`air-registry.systemd.service` 改用
+    `ExecStart=... -d <项目目录> server`。
+  - 两份 README:Quick start 改为基于 `go install`,新增「命令行用法」小节,
+    Development 保留源码流程。
+- 验收:`go vet ./... && go test ./...` 全绿;新增 `main_test.go`、
+  `db/embed_test.go` 覆盖参数解析/目录校验/默认值/内置迁移回退;手动验证
+  空目录仅含 `.env` 时 `server` 自动建表、网页与 `/v2/_catalog` 正常,
+  `db:status`/`db:migrate`/`db:rollback` 可用,源码仓库仍走磁盘迁移。
+
 ## 后续扩展(暂不做,仅记录)
 
 - htpasswd 风格多用户管理、推拉分权(token / 只读模式)

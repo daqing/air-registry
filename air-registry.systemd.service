@@ -4,8 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/ubuntu/sites/air-registry
-ExecStart=/home/ubuntu/go/bin/air-registry server
+# -d pins the project directory: .env and the SQLite database live there, so
+# the unit does not depend on systemd's WorkingDirectory.
+ExecStart=/home/ubuntu/go/bin/air-registry -d /home/ubuntu/sites/air-registry server
 Restart=on-failure
 RestartSec=5s
 

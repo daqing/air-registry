@@ -34,15 +34,77 @@ Passes the official OCI Distribution Spec conformance suite (v1.1.1,
 
 ## Quick start
 
+Install the binary — no source checkout required:
+
 ```bash
-cp .env.example .env   # then set AIRWAY_ENV=local, DSN and LISTEN
-go run . db:migrate    # create the schema
-go run .               # start the server
+go install github.com/daqing/air-registry@latest
 ```
 
-With the defaults from `.env.example` the server listens on
-`127.0.0.1:1905`. A typical local `DSN` is
-`sqlite://./tmp/registry-dev.db`.
+Then create a project directory to hold the `.env` and database, and run the
+binary against it with `-d`:
+
+```bash
+mkdir -p ~/air-registry
+cat > ~/air-registry/.env <<'EOF'
+AIRWAY_ENV="prod"
+LISTEN="127.0.0.1:1905"
+EOF
+
+air-registry -d ~/air-registry server
+```
+
+Open <http://127.0.0.1:1905/>. On first start the schema is created from the
+migrations embedded in the binary; because `-d` pins the project directory
+and `.env` sets no `DSN`/`DATA_DIR`, the SQLite database is
+`~/air-registry/registry.db` and blobs live under
+`~/air-registry/data/storage`. `go install` places the binary in `$GOBIN`
+(`$HOME/go/bin` by default), which must be on your `PATH`.
+
+> Use any `AIRWAY_ENV` other than `local` (e.g. `prod`): `local` is the
+> frontend source-dev mode and needs a `vendor/` directory from the source
+> tree, while an installed binary serves the production bundle embedded in it.
+
+## CLI usage
+
+`air-registry` is the project binary (`go install` puts it in `$GOBIN`).
+Run with no arguments to start the HTTP server; any other command is
+dispatched to the embedded Airway CLI.
+
+```
+Usage: air-registry [-d <project-dir>] [command]
+
+  -d, --dir <dir>   use <dir> as the project directory: load its .env and
+                    resolve relative paths (SQLite database, DATA_DIR, frontend
+                    bundle) inside it, so the command can run from anywhere
+  server            start the HTTP server (default)
+  gc                reclaim blobs no manifest references
+  <command>         any other Airway CLI command (db:migrate, repl, ...)
+```
+
+| Option | Description |
+|---|---|
+| `-d <dir>`, `--dir <dir>`, `-d=<dir>` | Project directory. The binary chdirs into `<dir>` and loads its `.env`, so relative paths (SQLite database, `DATA_DIR`, the dev frontend bundle) resolve inside the project. May appear anywhere on the command line. When `.env` sets neither `DSN` nor `DATA_DIR`, they default to `<dir>/registry.db` and `<dir>/data/storage`. |
+| `-v`, `--version` | Print the version and exit, without loading `.env`. |
+
+Typical commands:
+
+```bash
+air-registry db:migrate                       # create the schema (cwd project)
+air-registry server                           # start the server
+
+air-registry -d /srv/air-registry db:migrate  # same, against /srv/air-registry
+air-registry -d /srv/air-registry server
+air-registry -d /srv/air-registry gc          # garbage collection
+air-registry server -d /srv/air-registry      # -d may come after the command
+```
+
+Other Airway CLI commands (`repl`, `db:create`, `db:drop`, …) are available
+too, e.g. `air-registry -d /srv/air-registry repl`.
+
+Migrations are applied automatically at server start when the project has no
+on-disk `db/migrate` directory (the common case for a project directory driven
+by an installed binary); `db:migrate`, `db:rollback` and `db:status` then use
+the migrations embedded in the binary as well.
 
 ## Using the registry
 
@@ -200,8 +262,10 @@ DSN=sqlite://./tmp/registry-dev.db go run . gc
 ## Development
 
 ```bash
-go run .            # serve (local env rebuilds the frontend bundle in memory)
-go test ./...       # unit and API tests
+cp .env.example .env   # set AIRWAY_ENV=local, DSN and LISTEN
+go run . db:migrate    # create/upgrade the schema from ./db/migrate
+go run .               # serve (local env rebuilds the frontend bundle in memory)
+go test ./...          # unit and API tests
 go vet ./...
 ```
 
