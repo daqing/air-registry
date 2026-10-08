@@ -433,9 +433,36 @@ README「目标与需求」。
 - 验收:`just caddy` 启动后 push/pull 冒烟通过;脚本重复运行输出
   already configured;`go test ./...` 全绿。
 
+### T24 基本认证(basic auth)[done]
+
+- 目标:registry 的 OCI API 支持可配置的 HTTP basic auth;终端用户
+  `docker pull`/`docker push` 时由 CLI 提示输入用户名和密码。
+- 实现:
+  - `registrycfg` 新增 `AuthUsername`/`AuthPassword`/`AuthCredentials`
+    (`REGISTRY_AUTH_USERNAME`/`REGISTRY_AUTH_PASSWORD`,用户名 trim、密码
+    原样);`AuthEnabled` 改为:显式 `REGISTRY_AUTH_ENABLED` 布尔值优先,
+    未设(或非法)时只要两项凭据齐全即自动开启,只写一项不算配置。
+  - `middlewares.RegistryAuth` 从占位 401 改为真正校验:
+    `c.Request.BasicAuth()` 取凭据,用户名/密码用
+    `crypto/subtle.ConstantTimeCompare` 常量时间比对;缺失或不匹配时返回
+    `401` + `WWW-Authenticate: Basic realm="air-registry"` + OCI 错误体。
+    正是这个 Basic challenge 让 docker/oras 在 CLI 提示输入;开启认证但
+    未配置凭据时 fail closed,同样 401。网页端不受影响。
+  - `.env.example` Registry 小节更新:给出
+    `REGISTRY_AUTH_USERNAME`/`REGISTRY_AUTH_PASSWORD`/
+    `REGISTRY_AUTH_ENABLED` 示例与说明(默认注释掉,保持匿名)。
+  - 两份 README 同步:功能特性、docker 一节后新增「认证」小节
+    (docker 提示流程、`docker login` 缓存、crane/oras/curl)、配置表、
+    已知限制(单凭据 + HTTP 明文注意事项)。
+- 验收:`go vet ./... && go test ./...` 全绿;新增/更新测试覆盖——
+  registrycfg(`AuthEnabled` 显式开关与凭据自动开启、`AuthCredentials`
+  空值/trim/密码原样)、中间件(默认放行、无凭据 fail closed、正确/错误
+  凭据、非 Basic scheme)、routes 真实挂载(开认证后错误凭据 401、正确
+  凭据 200)。
+
 ## 后续扩展(暂不做,仅记录)
 
-- HTTP basic auth(推拉分权)、htpasswd 风格用户管理
+- htpasswd 风格多用户管理、推拉分权(token / 只读模式)
 - TLS / 反代部署指南
 - 网页端管理操作(删除 tag / 仓库)
 - 按仓库配额、只读模式等策略

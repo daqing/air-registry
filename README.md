@@ -27,9 +27,10 @@ Passes the official OCI Distribution Spec conformance suite (v1.1.1,
 - **Web UI** — server-rendered pages to search repositories by name, browse
   them paginated, and inspect image details (tags, layers, platforms,
   annotations, referrers)
-- **Authentication** — anonymous read/write by default;
-  `REGISTRY_AUTH_ENABLED` is a placeholder gate for the basic-auth/htpasswd
-  backend planned on the roadmap
+- **Authentication** — optional HTTP basic auth on the OCI API: set
+  `REGISTRY_AUTH_USERNAME`/`REGISTRY_AUTH_PASSWORD` and clients (docker,
+  crane, oras) prompt for the credentials on push/pull; the web UI stays
+  public
 
 ## Quick start
 
@@ -65,6 +66,32 @@ docker tag myapp:v1 192.168.1.10:1905/demo/app:v1
 docker push 192.168.1.10:1905/demo/app:v1
 docker pull 192.168.1.10:1905/demo/app:v1
 ```
+
+### Authentication
+
+Basic auth is off by default. Set a username and password in `.env` to turn
+it on:
+
+```bash
+REGISTRY_AUTH_USERNAME="admin"
+REGISTRY_AUTH_PASSWORD="change-me"
+```
+
+Only the `/v2/` API is gated; the web UI stays public. The first push or pull
+receives a `401` with a Basic challenge, so docker prompts on the terminal:
+
+```text
+$ docker push 192.168.1.10:1905/demo/app:v1
+Username: admin
+Password:
+```
+
+`docker login 192.168.1.10:1905` caches the credentials so later pushes and
+pulls don't prompt; `crane`/`oras` prompt the same way and `curl -u user:pass`
+works too. Auth turns on as soon as both credentials are set;
+`REGISTRY_AUTH_ENABLED` is an optional explicit override (`true`/`false`), and
+enabling auth without credentials fails closed with `401` rather than exposing
+the registry.
 
 ### crane / oras
 
@@ -138,7 +165,9 @@ All settings are environment variables (see `.env.example`):
 | `DSN` | — | Database DSN, e.g. `sqlite://./tmp/registry-dev.db` |
 | `DATA_DIR` | `./data/storage` | Blob storage root (`STORAGE_ROOT` still honored as a legacy fallback) |
 | `MAX_UPLOAD_SIZE` | `0` (unlimited) | Per-request blob upload cap in bytes; over the cap uploads fail with 413 |
-| `REGISTRY_AUTH_ENABLED` | `false` | Auth gate placeholder: when enabled, `/v2/` requests get 401 until a credential backend lands |
+| `REGISTRY_AUTH_USERNAME` | — | Basic-auth username for the `/v2/` API |
+| `REGISTRY_AUTH_PASSWORD` | — | Basic-auth password; setting both credentials enables auth |
+| `REGISTRY_AUTH_ENABLED` | follows credentials | Optional explicit override (`true`/`false`); enabled without credentials fails closed with `401` |
 | `URL_PREFIX` | — | Mount the web UI and API under a sub-path behind a reverse proxy |
 
 ## Garbage collection
@@ -154,8 +183,10 @@ DSN=sqlite://./tmp/registry-dev.db go run . gc
 
 ## Known limitations
 
-- **No built-in auth yet** — anyone who can reach the registry can push and
-  delete; keep it on a private network until the basic-auth backend ships.
+- **Single shared credential over plain HTTP** — basic auth protects the API
+  with one username/password pair, and over HTTP the header is base64-encoded
+  rather than encrypted, so pair it with TLS beyond a trusted LAN. Per-user
+  accounts, tokens and read-only/push ACLs are roadmap items.
 - **No built-in TLS** — terminate HTTP at a reverse proxy (nginx, Caddy) for
   anything beyond a trusted LAN; remember to remove the docker
   `insecure-registries` entry then.

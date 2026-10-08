@@ -25,8 +25,9 @@ pull、push、content discovery、content management)。
   上传后从未被引用的孤儿 blob
 - **网页端** — 服务端渲染页面:按名称搜索仓库、分页浏览、查看镜像详情
   (tag、层、多架构平台、annotations、referrers)
-- **认证** — 默认匿名读写;`REGISTRY_AUTH_ENABLED` 为 basic-auth/htpasswd
-  后端的占位开关(路线图中)
+- **认证** — OCI API 支持可选的 HTTP basic auth:配置
+  `REGISTRY_AUTH_USERNAME`/`REGISTRY_AUTH_PASSWORD` 后,docker、crane、oras
+  在推拉时会提示输入用户名和密码;网页端不受影响
 
 ## 快速开始
 
@@ -60,6 +61,29 @@ docker tag myapp:v1 192.168.1.10:1905/demo/app:v1
 docker push 192.168.1.10:1905/demo/app:v1
 docker pull 192.168.1.10:1905/demo/app:v1
 ```
+
+### 认证
+
+basic auth 默认关闭,在 `.env` 中设置用户名和密码即可开启:
+
+```bash
+REGISTRY_AUTH_USERNAME="admin"
+REGISTRY_AUTH_PASSWORD="change-me"
+```
+
+只有 `/v2/` API 受保护,网页端保持公开。首次 push/pull 会收到带 Basic
+challenge 的 `401`,docker 随即在终端提示输入:
+
+```text
+$ docker push 192.168.1.10:1905/demo/app:v1
+Username: admin
+Password:
+```
+
+`docker login 192.168.1.10:1905` 会缓存凭据,之后的推拉不再提示;
+`crane`/`oras` 同样提示,`curl -u user:pass` 也可直接使用。两项凭据都设置
+后认证自动开启;`REGISTRY_AUTH_ENABLED` 是可选的显式开关(true/false),
+开启认证但未配置凭据时会 fail closed 返回 `401`,不会把 registry 暴露出去。
 
 ### crane / oras
 
@@ -130,7 +154,9 @@ Caddy 根证书,并在 nerdctl CLI 与 rootless containerd daemon 都能读到
 | `DSN` | — | 数据库 DSN,如 `sqlite://./tmp/registry-dev.db` |
 | `DATA_DIR` | `./data/storage` | blob 存储根目录(`STORAGE_ROOT` 作为旧名仍兼容) |
 | `MAX_UPLOAD_SIZE` | `0`(不限) | 单请求 blob 上传上限(字节),超限返回 413 |
-| `REGISTRY_AUTH_ENABLED` | `false` | 认证开关占位:开启后 `/v2/` 请求一律 401,直到接入凭据后端 |
+| `REGISTRY_AUTH_USERNAME` | — | `/v2/` API 的 basic auth 用户名 |
+| `REGISTRY_AUTH_PASSWORD` | — | basic auth 密码;两项都设置即开启认证 |
+| `REGISTRY_AUTH_ENABLED` | 跟随凭据 | 可选显式开关(true/false);开启但无凭据时 fail closed 返回 `401` |
 | `URL_PREFIX` | — | 反代部署时把网页端和 API 挂在子路径下 |
 
 ## 垃圾回收
@@ -145,8 +171,9 @@ DSN=sqlite://./tmp/registry-dev.db go run . gc
 
 ## 已知限制
 
-- **尚无内置认证** —— 能访问 registry 的人即可推送和删除;在 basic-auth
-  后端落地前,请仅在私有网络中部署。
+- **单凭据、明文 HTTP** —— basic auth 使用一组共享用户名/密码保护 API,而
+  在 HTTP 下请求头只是 base64 编码而非加密;超出可信局域网时请配合 TLS。
+  多用户账号、token、只读/推拉分权均为路线图事项。
 - **无内置 TLS** —— 超出可信局域网时请用反代(nginx、Caddy)终结
   HTTPS;记得同时移除 docker 的 `insecure-registries` 配置。
 - **上传 session 在内存中** —— 重启服务会丢弃进行中的分块上传,客户端

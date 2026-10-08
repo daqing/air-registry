@@ -35,10 +35,36 @@ func MaxUploadSize() int64 {
 	return size
 }
 
-// AuthEnabled reports whether the registry auth gate is enabled
-// (REGISTRY_AUTH_ENABLED). It defaults to off; any value that is not a
-// recognizable boolean falls back to off as well.
+// AuthUsername returns the configured basic-auth username
+// (REGISTRY_AUTH_USERNAME), or "" when unset.
+func AuthUsername() string {
+	return strings.TrimSpace(os.Getenv("REGISTRY_AUTH_USERNAME"))
+}
+
+// AuthPassword returns the configured basic-auth password
+// (REGISTRY_AUTH_PASSWORD), or "" when unset. It is returned verbatim so
+// passwords may contain spaces or other significant characters.
+func AuthPassword() string {
+	return os.Getenv("REGISTRY_AUTH_PASSWORD")
+}
+
+// AuthCredentials returns the configured basic-auth pair. ok is false unless
+// both parts are present: a lone username or password cannot authenticate
+// anyone, so it never counts as configured.
+func AuthCredentials() (username, password string, ok bool) {
+	username = AuthUsername()
+	password = AuthPassword()
+	return username, password, username != "" && password != ""
+}
+
+// AuthEnabled reports whether basic auth is required on the /v2/ API. An
+// explicit REGISTRY_AUTH_ENABLED boolean wins; when the variable is unset (or
+// unparsable) auth turns on as soon as a username/password pair is configured,
+// so dropping credentials into .env is enough to protect the registry.
 func AuthEnabled() bool {
-	enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("REGISTRY_AUTH_ENABLED")))
-	return err == nil && enabled
+	if enabled, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("REGISTRY_AUTH_ENABLED"))); err == nil {
+		return enabled
+	}
+	_, _, ok := AuthCredentials()
+	return ok
 }
