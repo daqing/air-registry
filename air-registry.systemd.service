@@ -1,0 +1,13 @@
+[Unit]
+Description=Air Registry Server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/sites/air-registry
+ExecStart=/home/ubuntu/go/bin/air-registry server
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

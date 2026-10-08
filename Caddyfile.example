@@ -1,0 +1,16 @@
+{
+  # Local dev only: use Caddy's built-in CA for all sites in this file.
+  # local_certs
+}
+
+air-registry.localhost:8443 {
+        reverse_proxy {$AIR_REGISTRY_UPSTREAM:127.0.0.1:1905}
+}
+
+reg.mindwork.cool:443 {
+        reverse_proxy {$AIR_REGISTRY_UPSTREAM:127.0.0.1:1905}
+}
+
+http://reg.mindwork.cool:80 {
+        redir https://reg.mindwork.cool{uri} 308
+}

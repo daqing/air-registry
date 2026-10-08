@@ -1,0 +1,16 @@
+[Unit]
+Description=Caddy for air-registry
+After=network.target
+
+[Service]
+Type=notify
+WorkingDirectory=/home/ubuntu/sites/air-registry
+EnvironmentFile=-/home/ubuntu/sites/air-registry/.env
+Environment=AIR_REGISTRY_UPSTREAM=127.0.0.1:1905
+ExecStart=/usr/bin/caddy run --config /home/ubuntu/sites/air-registry/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /home/ubuntu/sites/air-registry/Caddyfile
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
